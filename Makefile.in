@@ -1,0 +1,59 @@
+SHELL = /bin/sh
+CFLAGS = -g -Wall -pedantic -std=c99 -Wfatal-errors -Werror @SYSTEM_CFLAGS@
+LDFLAGS = @SYSTEM_LDFLAGS@
+
+prefix = @prefix@
+exec_prefix = $(prefix)
+bindir = $(exec_prefix)/bin
+libdir = $(exec_prefix)/lib
+datarootdir = $(prefix)/share
+mandir = $(datarootdir)/man
+
+INSTALL ?= install
+INSTALLFLAGS ?= -D
+
+SRCS=\
+	shaback.c
+
+PROG=shaback
+MAN=shaback.1
+
+OBJS=$(SRCS:.c=.o)
+
+all: Makefile $(PROG)
+
+$(PROG): $(OBJS)
+	$(CC) -o$@ $(OBJS) $(LDFLAGS)
+
+Makefile: Makefile.in
+	./configure $(CONFIGURE_FLAGS)
+
+deps:
+	sed -i '/^# Dependencies/,/^# End dependencies/d' Makefile
+	echo "# Dependencies (generated on $$(date))" >>Makefile
+	for a in $(SRCS) ; \
+		do \
+			$(CC) -MM -MT $$(echo $$a | cut -d. -f1).o $$a \
+				>>Makefile ; \
+		done >>Makefile
+	echo "# End dependencies" >>Makefile
+
+.c.o:
+	$(CC) $(CFLAGS) -o$@ -c $<
+
+clean:
+	rm -f $(OBJS) $(PROG)
+
+install: $(PROG)
+	$(INSTALL) $(INSTALLFLAGS) $(PROG) $(DESTDIR)$(bindir)/$(PROG)
+	$(INSTALL) $(INSTALLFLAGS) -m 444 $(MAN) \
+		$(DESTDIR)$(mandir)/man1/$(MAN)
+
+uninstall:
+	rm -f $(DESTDIR)$(bindir)/$(PROG)
+	rm -f $(DESTDIR)$(mandir)/man1/$(MAN)
+
+.PHONY: deps
+
+# Dependencies
+# End dependencies
