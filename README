@@ -6,28 +6,41 @@ pax(1), dump(8), but is
    3) does SHA-checksumming
    4) builds an index and can restore single files fast
 
+USE AT YOUR OWN RISK! NOT YET TESTED VERY WELL!
+
 Example:
 
-   find / | shaback -w /dev/rsd3c
-   shaback -l /dev/rsd3c
-   shaback -r /dev/rsd3c /the-file-which-was-lost
+   # Build new archive
+   find / | shaback >/tmp/test
+
+   # Extract the index from archive
+   OFFSET=$(expr $(head -1 /tmp/test | awk '{ print $5 }') / 512)
+   dd if=/tmp/test bs=512 skip=$OFFSET
+
+   # Extract particular file
+   FILE_OFFSET=$(expr $(dd if=/tmp/test bs=512 skip=$OFFSET | \
+      grep -m1 file | awk '{ print $2 }') / 512)
+   FILE_SIZE=$(expr $(dd if=/tmp/test bs=512 skip=$OFFSET | \
+      grep -m1 file | awk '{ print $11 }') / 512)
+   dd if=/tmp/test bs=512 skip=$FILE_OFFSET count=$FILE_SIZE
 
 Builds an image like this:
 
-   SHABACK_BEGIN <shaback magic number> <time> <shaback end offset>\n
-   <type> <ctime> <atime> <mtime> <mode> <uid> <gid> <size> <inode>
-   <offset> <fullpath> <hash meta> <hash file>\n
-   <shaback magic number> SHABACK_END <time>\n
+   SHABACK <shaback magic number> <time> <entries> <index offset>
 
-And then for the files at <offset>
+And then files are dumped one by one, and each followed by a metadata
+section:
 
-   <shaback magic number> SHABACK <type> <ctime> <atime> <mtime> <mode>
-   <uid> <gid> <size> <inode> <offset> <fullpath> <hash meta> <hash file>\n
+   <shaback magic number> <offset> <type> <inode> <ctime> <atime>
+   <mtime> <mode> <uid> <gid> <size> <hash meta> <hash file> <path>
 
-i.e. metadata is duplicated (in case the index is corrupted).
+And lastly, all metadata sections are dumped once more at the index
+offset, i.e. metadata is duplicated (in case the index is corrupted).
 
 All entries are aligned to 512-byte blocks in case bad blocks corrupts
 something, rest of the blocks can be salvaged cleanly.
 
 The shaback magic number is a random number that is unique so that
 corrupted or partially broken backup can be restored.
+
+Standard tools like dd can be used for restoring a corrupted archive.
