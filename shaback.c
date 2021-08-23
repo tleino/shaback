@@ -1,5 +1,6 @@
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <limits.h>
 
 #include <stdint.h>
 #include <stdio.h>
@@ -24,6 +25,7 @@ struct shaback_entry
 	char *hash_meta;
 	char *hash_file;
 	unsigned char *path;
+	unsigned char *link_path;
 	struct shaback_entry *next;	
 };
 
@@ -60,12 +62,14 @@ shaback_print_entry(struct shaback *shaback, char **buf, size_t *bufsz,
 		}
 		len = snprintf(*buf, *bufsz, "%llu %llu "
 		    "%c %llu %llu %llu %llu %llu %llu "
-		    "%llu %llu %s %s %s\n",
+		    "%llu %llu %s %s %s%s%s\n",
 		    shaback->magic,
 		    ep->offset, ep->type, ep->inode, ep->ctime,
 		    ep->atime, ep->mtime,
 		    ep->mode, ep->uid, ep->gid, ep->size,
-		    ep->hash_meta, ep->hash_file, ep->path);
+		    ep->hash_meta, ep->hash_file, ep->path,
+		    (ep->link_path == NULL) ? "" : "\n",
+		    (ep->link_path == NULL) ? "" : (char *) ep->link_path);
 	} while (len >= *bufsz);
 
 	if (strcmp(ep->hash_meta, "!") == 0) {
@@ -151,6 +155,8 @@ shaback_add(struct shaback *shaback, const char *path)
 {
 	struct stat sb;
 	struct shaback_entry e = { 0 }, *ep;
+	ssize_t n;
+	char buf[PATH_MAX + 1];
 
 	if (lstat(path, &sb) != 0) {
 		warn("lstat %s", path);
@@ -163,6 +169,13 @@ shaback_add(struct shaback *shaback, const char *path)
 	} else if (S_ISLNK(sb.st_mode)) {
 		shaback->symlinks++;
 		e.type = 'l';
+		n = readlink(path, buf, sizeof(buf) - 1);
+		if (n <= 0)
+			warn("readlink %s", path);
+		else {
+			buf[n] = '\0';
+			e.link_path = (unsigned char *) strdup(buf);
+		}
 	} else if (S_ISREG(sb.st_mode)) {
 		shaback->regulars++;
 		e.type = 'f';

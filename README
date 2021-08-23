@@ -26,13 +26,14 @@ Example:
 
 Builds an image like this:
 
-   SHABACK <shaback magic number> <time> <entries> <index offset>
+   SHABACK <shaback magic number> <time> <entries> <index offset>\n
 
 And then files are dumped one by one, and each followed by a metadata
 section:
 
    <shaback magic number> <offset> <type> <inode> <ctime> <atime>
-   <mtime> <mode> <uid> <gid> <size> <hash meta> <hash file> <path>
+   <mtime> <mode> <uid> <gid> <size> <hash meta> <hash file> <path>\n
+   <link path>
 
 And lastly, all metadata sections are dumped once more at the index
 offset, i.e. metadata is duplicated (in case the index is corrupted).
