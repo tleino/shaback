@@ -40,6 +40,10 @@ struct shaback
 	uint64_t end_offset;
 	uint64_t pos;
 	uint64_t index_offset;
+	uint64_t index_len;
+	FILE *fp_out;
+	char *tmp_buf;
+	size_t tmp_bufsz;
 	struct shaback_entry *first;
 };
 
@@ -49,31 +53,62 @@ shaback_print_entry(struct shaback *shaback, char **buf, size_t *bufsz,
 {
 	int len = 0;
 	char output[SHA1_DIGEST_STRING_LENGTH];
+	uint64_t paths_len;
+	size_t path_len, link_len;
+	char *p;
+
+	path_len = strlen((const char *) ep->path);
+	if (ep->link_path != NULL)
+		link_len = strlen((const char *) ep->link_path);
 
 	do {
 		if (len >= *bufsz) {
 			if (*bufsz == 0)
-				*bufsz = 128;
+				*bufsz = 512;
 			else
 				*bufsz *= 2;
 			*buf = realloc(*buf, *bufsz);
 			if (*buf == NULL)
 				return -1;
 		}
-		len = snprintf(*buf, *bufsz, "%llu %llu "
+
+		/*
+		 * Calculate the length of file path and link path which
+		 * are stored in format of 'file\0link\0\n' and in case link
+		 * is missing we have 'file\0\n' i.e. in addition to the
+		 * string length, we need to count 2-3 chars extra.
+		 */
+		paths_len = path_len + 1;
+		if (ep->link_path != NULL)
+			paths_len += link_len + 1;
+		paths_len++;	/* count '\n' */
+
+		len = snprintf(*buf, *bufsz, "%020llu %llu "
 		    "%c %llu %llu %llu %llu %llu %llu "
-		    "%llu %llu %s %s %s%s%s\n",
+		    "%llu %llu %s %s %llu\n",
 		    shaback->magic,
 		    ep->offset, ep->type, ep->inode, ep->ctime,
 		    ep->atime, ep->mtime,
 		    ep->mode, ep->uid, ep->gid, ep->size,
-		    ep->hash_meta, ep->hash_file, ep->path,
-		    (ep->link_path == NULL) ? "" : "\n",
-		    (ep->link_path == NULL) ? "" : (char *) ep->link_path);
-	} while (len >= *bufsz);
+		    ep->hash_meta, ep->hash_file, paths_len);
+
+		if (len + paths_len + 1 < *bufsz) {
+			p = *buf;
+			p += len;
+			memcpy(p, ep->path, path_len + 1);
+			p += path_len + 1;
+			if (ep->link_path != NULL) {
+				memcpy(p, ep->link_path, link_len + 1);
+				p += link_len + 1;
+			}
+			*p++ = '\n';
+			*p = '\0';
+		}
+		len += paths_len;
+	} while (len + 1 >= *bufsz);
 
 	if (strcmp(ep->hash_meta, "!") == 0) {
-		SHA1Data((u_int8_t *) *buf, strlen(*buf), output);
+		SHA1Data((u_int8_t *) *buf, len, output);
 		ep->hash_meta = strdup(output);
 		if (ep->hash_meta == NULL) {
 			ep->hash_meta = "!";
@@ -82,9 +117,26 @@ shaback_print_entry(struct shaback *shaback, char **buf, size_t *bufsz,
 		return shaback_print_entry(shaback, buf, bufsz, ep);
 	}
 
-	shaback->pos += len;
+	return len;
+}
 
-	return 0;
+int
+shaback_metadata_len(struct shaback *shaback, struct shaback_entry *ep)
+{
+	int r;
+	int len;
+	int m;
+
+	r = shaback_print_entry(shaback, &shaback->tmp_buf,
+	    &shaback->tmp_bufsz, ep);
+	if (r == -1)
+		return -1;
+
+	len = strlen(shaback->tmp_buf);
+	m = 512 - (len % 512);
+	len += m;
+
+	return len;
 }
 
 int
@@ -107,7 +159,7 @@ shaback_dump_file(struct shaback *shaback, struct shaback_entry *ep)
 	ep->offset = shaback->pos;
 
 	while ((n = fread(buf, sizeof(char), sizeof(buf), fp)) > 0) {
-		fwrite(buf, sizeof(char), n, stdout);
+		fwrite(buf, sizeof(char), n, shaback->fp_out);
 		shaback->pos += n;
 		SHA1Update(&sha, (u_int8_t *) buf, n);
 	}
@@ -139,14 +191,8 @@ shaback_align(struct shaback *shaback)
 	uint64_t i;
 
 	m = 512 - (shaback->pos % 512);
-	if (m == 512)
-		return;
-	for (i = 0; i < m; i++) {
-		if (i == 0 || i == m - 1)
-			putchar('\n');
-		else
-			putchar('\0');
-	}
+	for (i = 0; i < m; i++)
+		fputc('\0', shaback->fp_out);
 	shaback->pos += m;
 }
 
@@ -157,6 +203,7 @@ shaback_add(struct shaback *shaback, const char *path)
 	struct shaback_entry e = { 0 }, *ep;
 	ssize_t n;
 	char buf[PATH_MAX + 1];
+	int len;
 
 	if (lstat(path, &sb) != 0) {
 		warn("lstat %s", path);
@@ -211,23 +258,40 @@ shaback_add(struct shaback *shaback, const char *path)
 	shaback->first = ep;
 	shaback->entries++;
 
-	/*
-	 * Calculate new index offset, with padding if needed.
-	 */
-	if ((512 - (e.size % 512)) != 512)
+	if (e.type == 'f') {
+
+		/*
+		 * Calculate new index offset, with padding if needed.
+		 */
 		shaback->index_offset += (512 - (e.size % 512));
-	shaback->index_offset += e.size;
+		shaback->index_offset += e.size;
+	}
 
 	/*
 	 * Calculate new index offset, with the added metadata.
 	 */
-	shaback->index_offset += 512;
+	len = shaback_metadata_len(shaback, ep);
+	if (len == -1)
+		err(1, "shaback_metadata_len");
+
+	if (e.type == 'f')
+		shaback->index_offset += len;
+
+	shaback->index_len += len;
+}
+
+void
+usage(const char *prog)
+{
+	fprintf(stderr,
+	    "Usage: %s [-a0] -w <file>\n", prog);
 }
 
 int
-main()
+main(int argc, char **argv)
 {
 	struct shaback shaback = { 0 };
+	struct shaback shaprev = { 0 };
 	struct shaback_entry *ep;
 	FILE *fp;
 	char *line = NULL;
@@ -235,13 +299,73 @@ main()
 	ssize_t linelen;
 	char *buf = NULL;
 	size_t bufsz = 0;
+	int ch, want_append;
+	int i;
+	char *file = NULL;
+	int delim;
+	int len;
+
+	want_append = 0;
+	delim = '\n';
+	while ((ch = getopt(argc, argv, "aw:0")) != -1) {
+		switch (ch) {
+		case 'a':
+			want_append ^= 1;
+			break;
+		case 'w':
+			if (optarg[0] == '-' && optarg[1] == '\0') {
+				shaback.fp_out = fdopen(STDOUT_FILENO, "w");
+				if (shaback.fp_out == NULL)
+					err(1, "fdopen");
+			} else if (optarg[0] != '\0') {
+				file = strdup(optarg);
+			}
+			break;
+		case '0':	/* Use the NUL as a pathname delimeter */
+			delim = '\0';
+			break;
+		}
+	}
+
+	if (want_append) {
+		if (shaback.fp_out != NULL &&
+		    fileno(shaback.fp_out) == STDOUT_FILENO)
+			errx(1, "-a not compatible with -w -");
+
+		shaback.fp_out = fopen(file, "r+");
+		if (shaback.fp_out == NULL)
+			err(1, "%s", file);
+
+		warnx("iterate through shaprev....");
+		while (fscanf(shaback.fp_out,
+		    "SHABACK %llu %llu %llu %llu %llu %*llu %*llu",
+		    &shaprev.magic, &shaprev.time, &shaprev.entries,
+		    &shaprev.index_offset, &shaprev.end_offset) == 5) {
+			warnx("found one....");
+			fseeko(shaback.fp_out, shaprev.end_offset, SEEK_SET);
+		}
+		shaback.index_offset = ftello(shaback.fp_out);
+	} else if (shaback.fp_out == NULL) {
+		shaback.fp_out = fopen(file, "w");
+		if (shaback.fp_out == NULL)
+			err(1, "%s", file);
+	}
+
+	if (shaback.fp_out == NULL) {
+		usage(argv[0]);
+		return 1;
+	}
+
+	argc -= optind;
+	argv += optind;
 
 	fp = fdopen(STDIN_FILENO, "r");
 	if (fp == NULL)
 		err(1, "fdopen %d", STDIN_FILENO);
 
-	while ((linelen = getline(&line, &linesize, fp)) != -1) {
-		line[strcspn(line, "\r\n")] = '\0';
+	while ((linelen = getdelim(&line, &linesize, delim, fp)) != -1) {
+		if (delim != '\0')
+			line[strcspn(line, "\r\n")] = '\0';
 		shaback_add(&shaback, line);
 		fprintf(stderr, "\r%llu", shaback.entries);
 	}
@@ -257,9 +381,13 @@ main()
 
 	arc4random_buf(&shaback.magic, sizeof(uint64_t));
 
-	shaback.pos += printf("SHABACK %llu %llu %llu %llu\n",
-	    shaback.magic, time(0), shaback.entries, shaback.index_offset);
-	shaback_align(&shaback);
+	shaback.pos += fprintf(shaback.fp_out,
+	    "SHABACK %020llu %llu %llu %llu %llu %llu %llu\n",
+	    shaback.magic, time(0), shaback.entries,
+	    shaback.index_offset,
+	    shaback.index_offset + shaback.index_len + 512,
+	    shaback.index_offset / 512,
+	    (shaback.index_offset + shaback.index_len + 512) / 512);
 
 	ep = shaback.first;
 	while (ep != NULL) {
@@ -267,9 +395,12 @@ main()
 			shaback_align(&shaback);
 			if (shaback_dump_file(&shaback, ep) == 0) {
 				shaback_align(&shaback);
-				shaback_print_entry(&shaback, &buf, &bufsz,
-				    ep);
-				printf("%s", buf);
+				len = shaback_print_entry(&shaback,
+				    &buf, &bufsz, ep);
+				if (len == -1)
+					err(1, "shaback_print_entry");
+				shaback.pos += len;
+				fwrite(buf, sizeof(char), len, shaback.fp_out);
 			} else
 				warn("shaback_dump_file %s", ep->path);
 		}
@@ -279,10 +410,16 @@ main()
 	ep = shaback.first;
 	while (ep != NULL) {
 		shaback_align(&shaback);
-		shaback_print_entry(&shaback, &buf, &bufsz, ep);
-		printf("%s", buf);
+		len = shaback_print_entry(&shaback, &buf, &bufsz, ep);
+		if (len == -1)
+			err(1, "shaback_print_entry");
+		shaback.pos += len;
+		fwrite(buf, sizeof(char), len, shaback.fp_out);
 		ep = ep->next;
 	}
+	shaback_align(&shaback);
+	for (i = 0; i < 512; i++)
+		fputc('\0', shaback.fp_out);
 
 	fclose(fp);	
 }
