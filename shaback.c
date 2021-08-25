@@ -52,6 +52,7 @@ struct shaback
 	uint64_t index_len;
 	time_t begin_time;
 	int dedup;
+	int dupmeta;
 	FILE *fp_out;
 	char *tmp_buf;
 	size_t tmp_bufsz;
@@ -162,11 +163,11 @@ shaback_calculate_offsets(struct shaback *shaback)
 	shaback->index_offset_blocks = (shaback->begin_offset / 512);
 	shaback->index_offset_blocks += 1;	/* header block */
 	for (ep = shaback->first; ep != NULL; ep = ep->next) {
-		if (ep->type != 'f')
-			continue;
-		mdlen = shaback_metadata_len(shaback, ep);
-		shaback->index_offset_blocks += (mdlen / 512);
-		if (ep->is_dup)
+		if (shaback->dupmeta) {
+			mdlen = shaback_metadata_len(shaback, ep);
+			shaback->index_offset_blocks += (mdlen / 512);
+		}
+		if (ep->type != 'f' || ep->is_dup)
 			continue;
 		shaback->index_offset_blocks += ((512 + ep->size) / 512);
 	}
@@ -375,7 +376,7 @@ void
 usage(const char *prog)
 {
 	fprintf(stderr,
-	    "Usage: %s [-ad0] -w <file>\n", prog);
+	    "Usage: %s [-adD0] -w <file>\n", prog);
 }
 
 int
@@ -397,13 +398,17 @@ main(int argc, char **argv)
 
 	want_append = 0;
 	delim = '\n';
-	while ((ch = getopt(argc, argv, "adw:0")) != -1) {
+	shaback.dupmeta = 1;
+	while ((ch = getopt(argc, argv, "adDw:0")) != -1) {
 		switch (ch) {
 		case 'a':
 			want_append ^= 1;
 			break;
 		case 'd':
 			shaback.dedup ^= 1;
+			break;
+		case 'D':
+			shaback.dupmeta ^= 1;
 			break;
 		case 'w':
 			if (optarg[0] == '-' && optarg[1] == '\0') {
@@ -488,31 +493,20 @@ main(int argc, char **argv)
 
 	arc4random_buf(&shaback.magic, sizeof(uint64_t));
 
-#if 0
-	shaback.pos += fprintf(shaback.fp_out,
-	    "SHABACK %020llu %llu %llu %llu %llu %llu %llu\n",
-	    shaback.magic, time(0), shaback.entries,
-	    shaback.index_offset,
-	    shaback.index_offset + shaback.index_len + 512,
-	    shaback.index_offset / 512,
-	    (shaback.index_offset + shaback.index_len + 512) / 512);
-#endif
+	shaback.pos += fprintf(shaback.fp_out, "SHABACK\n");
 
 	ep = shaback.first;
-	while (ep != NULL) {
-		if (ep->type == 'f') {
-			if (shaback_dump_file(&shaback, ep) == 0) {
-				shaback_align(&shaback);
-				len = shaback_print_entry(&shaback,
-				    &buf, &bufsz, ep);
-				if (len == -1)
-					err(1, "shaback_print_entry");
-				shaback.pos += len;
-				fwrite(buf, sizeof(char), len, shaback.fp_out);
-			} else
-				warn("shaback_dump_file %s", ep->path);
+	for (ep = shaback.first; ep != NULL; ep = ep->next) {
+		if (ep->type == 'f' && shaback_dump_file(&shaback, ep) != 0)
+			warn("shaback_dump_file %s", ep->path);
+		if (shaback.dupmeta) {
+			shaback_align(&shaback);
+			len = shaback_print_entry(&shaback, &buf, &bufsz, ep);
+			if (len == -1)
+				err(1, "shaback_print_entry");
+			shaback.pos += len;
+			fwrite(buf, sizeof(char), len, shaback.fp_out);
 		}
-		ep = ep->next;
 	}
 
 	if (shaback.dedup)
