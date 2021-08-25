@@ -1,11 +1,38 @@
-shaback is a SHA-checksumming backup/restore tool, similar to tar(1),
-pax(1), dump(8), but is
+Shaback is a SHA-checksumming backup/restore tool, similar to tar(1),
+pax(1), dump(8), but
 
-   1) free from file size or file name limits
-   2) very simple, no legacy cruft
+   1) is free from file size or file name limits or byte-order issues
+   2) is very simple, no legacy cruft
    3) does SHA-checksumming
    4) builds an index and can restore single files fast
-   5) TODO: deduplicates cheaply
+   5) deduplicates fast
+   6) the format is mostly text-based, easy to work with
+
+Shaback uses some advantages that were not previously available.
+
+   1) RAM is cheap
+
+      Metadata can be kept in memory while dumping allowing things
+      like building an index and deduplication without constant
+      re-reading.
+
+   2) VFS cache can be leveraged
+
+      Reading twice is cheap and this is useful when doing
+      deduplication -- once for the hash calculation, once for the
+      data to be written if writing is needed. These reads will be
+      done one after another, caching will work if the file fits to
+      cache.
+
+   3) Seeking is possible
+
+      When doing network backup with stream redirection, or when
+      backing up to a tape drive, seeking is not possible or it is
+      expensive. Shaback supports these scenarios, but some features
+      such as deduplication or incremental backup requires seeking
+      a few times (like once or twice). There will be no seeking
+      overhead when using mechanical HDDs because shaback is still
+      very linear.
 
 USE AT YOUR OWN RISK! NOT YET TESTED VERY WELL!
 
@@ -27,8 +54,10 @@ Example:
 
 Builds an image like this:
 
-   SHABACK <shaback magic number> <time> <entries> <index offset>
-   <end offset> <index offset in blocks> <end offset in blocks>\n
+   SHABACK <shaback magic number> <begin time> <entries>
+   <begin offset> <index offset> <end offset>
+   <begin offset in blocks> <index offset in blocks>
+   <end offset in blocks>\n
 
 And then files are dumped one by one, and each followed by a metadata
 section:

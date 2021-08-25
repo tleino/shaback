@@ -10,6 +10,8 @@
 #include <unistd.h>
 #include <sha1.h>
 
+#define HASHMAP_ALLOC	(1024 * 1024)
+
 struct shaback_entry
 {
 	uint8_t type;
@@ -26,7 +28,10 @@ struct shaback_entry
 	char *hash_file;
 	unsigned char *path;
 	unsigned char *link_path;
-	struct shaback_entry *next;	
+	u_int8_t key[SHA1_DIGEST_LENGTH];
+	int is_dup;
+	struct shaback_entry *next;
+	struct shaback_entry *hashmap_next;
 };
 
 struct shaback
@@ -36,16 +41,25 @@ struct shaback
 	uint64_t dirs;
 	uint64_t regulars;
 	uint64_t symlinks;
+	uint64_t dups;
 	uint64_t time;
+	uint64_t begin_offset;
 	uint64_t end_offset;
+	uint64_t end_offset_blocks;
 	uint64_t pos;
 	uint64_t index_offset;
+	uint64_t index_offset_blocks;
 	uint64_t index_len;
+	time_t begin_time;
+	int dedup;
 	FILE *fp_out;
 	char *tmp_buf;
 	size_t tmp_bufsz;
 	struct shaback_entry *first;
+	struct shaback_entry **hashmap;
 };
+
+void				shaback_align(struct shaback *);
 
 int
 shaback_print_entry(struct shaback *shaback, char **buf, size_t *bufsz,
@@ -139,6 +153,31 @@ shaback_metadata_len(struct shaback *shaback, struct shaback_entry *ep)
 	return len;
 }
 
+void
+shaback_calculate_offsets(struct shaback *shaback)
+{
+	struct shaback_entry *ep;
+	int mdlen;
+
+	shaback->index_offset_blocks = (shaback->begin_offset / 512);
+	shaback->index_offset_blocks += 1;	/* header block */
+	for (ep = shaback->first; ep != NULL; ep = ep->next) {
+		if (ep->type != 'f')
+			continue;
+		mdlen = shaback_metadata_len(shaback, ep);
+		shaback->index_offset_blocks += (mdlen / 512);
+		if (ep->is_dup)
+			continue;
+		shaback->index_offset_blocks += ((512 + ep->size) / 512);
+	}
+
+	shaback->end_offset_blocks = shaback->index_offset_blocks;
+	for (ep = shaback->first; ep != NULL; ep = ep->next) {
+		mdlen = shaback_metadata_len(shaback, ep);
+		shaback->end_offset_blocks += (mdlen / 512);
+	}
+}
+
 int
 shaback_dump_file(struct shaback *shaback, struct shaback_entry *ep)
 {
@@ -146,9 +185,10 @@ shaback_dump_file(struct shaback *shaback, struct shaback_entry *ep)
 	size_t n;
 	static char buf[1024 * 16];
 	SHA1_CTX sha;
-	u_int8_t result[SHA1_DIGEST_LENGTH] = { 0 };
 	char output[SHA1_DIGEST_STRING_LENGTH] = { 0 }, *p;
 	size_t i;
+	struct shaback_entry *hp;
+	uint64_t numeric_key;
 
 	fp = fopen((char *) ep->path, "r");
 	if (fp == NULL)
@@ -158,9 +198,14 @@ shaback_dump_file(struct shaback *shaback, struct shaback_entry *ep)
 
 	ep->offset = shaback->pos;
 
+	if (shaback->dedup == 0)
+		shaback_align(shaback);
+
 	while ((n = fread(buf, sizeof(char), sizeof(buf), fp)) > 0) {
-		fwrite(buf, sizeof(char), n, shaback->fp_out);
-		shaback->pos += n;
+		if (shaback->dedup == 0) {
+			fwrite(buf, sizeof(char), n, shaback->fp_out);
+			shaback->pos += n;
+		}
 		SHA1Update(&sha, (u_int8_t *) buf, n);
 	}
 	if (ferror(fp)) {
@@ -168,10 +213,56 @@ shaback_dump_file(struct shaback *shaback, struct shaback_entry *ep)
 		return -1;
 	}
 
-	SHA1Final((u_int8_t *) result, &sha);
+	SHA1Final((u_int8_t *) ep->key, &sha);
 	p = output;
-	for (i = 0; i < SHA1_DIGEST_LENGTH; i++)
-		p += snprintf(p, 2 + 1, "%02x", result[i]);
+	numeric_key = 0;
+	for (i = 0; i < SHA1_DIGEST_LENGTH; i++) {
+		p += snprintf(p, 2 + 1, "%02x", ep->key[i]);
+		numeric_key ^= (ep->key[i] << (i * 2));
+	}
+
+	/*
+	 * Add to hashmap.
+	 */
+	if (shaback->dedup == 1) {
+		hp = shaback->hashmap[numeric_key % HASHMAP_ALLOC];
+		while (hp != NULL) {
+			for (i = 0; i < SHA1_DIGEST_LENGTH; i++)
+				if (hp->key[i] != ep->key[i])
+					break;
+			if (i != SHA1_DIGEST_LENGTH) {
+				if (hp->hashmap_next == NULL) {
+					hp->hashmap_next = ep;
+					hp = hp->hashmap_next;
+					break;
+				}
+				hp = hp->hashmap_next;
+			} else {
+				ep->offset = hp->offset;
+				ep->is_dup = 1;
+				shaback->dups++;
+				break;
+			}
+		}
+		if (hp == NULL) {
+			shaback->hashmap[numeric_key % HASHMAP_ALLOC] = ep;
+
+			if (fseek(fp, 0, SEEK_SET) == -1)
+				err(1, "fseek");
+
+			shaback_align(shaback);
+			while ((n = fread(buf, sizeof(char),
+			    sizeof(buf), fp)) > 0) {
+				fwrite(buf, sizeof(char), n,
+				    shaback->fp_out);
+				shaback->pos += n;
+			}
+			if (ferror(fp)) {
+				fclose(fp);
+				return -1;
+			}
+		}
+	}
 
 	ep->hash_file = strdup((const char *) output);
 	if (ep->hash_file == NULL) {
@@ -284,7 +375,7 @@ void
 usage(const char *prog)
 {
 	fprintf(stderr,
-	    "Usage: %s [-a0] -w <file>\n", prog);
+	    "Usage: %s [-ad0] -w <file>\n", prog);
 }
 
 int
@@ -300,17 +391,19 @@ main(int argc, char **argv)
 	char *buf = NULL;
 	size_t bufsz = 0;
 	int ch, want_append;
-	int i;
 	char *file = NULL;
 	int delim;
 	int len;
 
 	want_append = 0;
 	delim = '\n';
-	while ((ch = getopt(argc, argv, "aw:0")) != -1) {
+	while ((ch = getopt(argc, argv, "adw:0")) != -1) {
 		switch (ch) {
 		case 'a':
 			want_append ^= 1;
+			break;
+		case 'd':
+			shaback.dedup ^= 1;
 			break;
 		case 'w':
 			if (optarg[0] == '-' && optarg[1] == '\0') {
@@ -327,6 +420,13 @@ main(int argc, char **argv)
 		}
 	}
 
+	if (shaback.dedup) {
+		shaback.hashmap = calloc(HASHMAP_ALLOC,
+		    sizeof(struct shaback_entry *));
+		if (shaback.hashmap == NULL)
+			err(1, "calloc");
+	}
+
 	if (want_append) {
 		if (shaback.fp_out != NULL &&
 		    fileno(shaback.fp_out) == STDOUT_FILENO)
@@ -336,15 +436,20 @@ main(int argc, char **argv)
 		if (shaback.fp_out == NULL)
 			err(1, "%s", file);
 
-		warnx("iterate through shaprev....");
 		while (fscanf(shaback.fp_out,
-		    "SHABACK %llu %llu %llu %llu %llu %*llu %*llu",
-		    &shaprev.magic, &shaprev.time, &shaprev.entries,
-		    &shaprev.index_offset, &shaprev.end_offset) == 5) {
-			warnx("found one....");
-			fseeko(shaback.fp_out, shaprev.end_offset, SEEK_SET);
+		    "SHABACK %llu %llu %llu %llu %llu %llu %*llu %*llu %*llu",
+		    &shaprev.magic, &shaprev.begin_time, &shaprev.entries,
+		    &shaprev.begin_offset,
+		    &shaprev.index_offset, &shaprev.end_offset) == 6) {
+			warnx("found previous backup of %llu blocks "
+			    "at block %llu",
+			    (shaprev.end_offset - shaprev.begin_offset) / 512,
+			    shaprev.begin_offset / 512);
+			if (fseeko(shaback.fp_out, shaprev.end_offset,
+			    SEEK_SET) == -1)
+				err(1, "fseeko");
 		}
-		shaback.index_offset = ftello(shaback.fp_out);
+		shaback.begin_offset = shaprev.end_offset;
 	} else if (shaback.fp_out == NULL) {
 		shaback.fp_out = fopen(file, "w");
 		if (shaback.fp_out == NULL)
@@ -362,6 +467,8 @@ main(int argc, char **argv)
 	fp = fdopen(STDIN_FILENO, "r");
 	if (fp == NULL)
 		err(1, "fdopen %d", STDIN_FILENO);
+
+	shaback.begin_time = time(0);
 
 	while ((linelen = getdelim(&line, &linesize, delim, fp)) != -1) {
 		if (delim != '\0')
@@ -381,6 +488,7 @@ main(int argc, char **argv)
 
 	arc4random_buf(&shaback.magic, sizeof(uint64_t));
 
+#if 0
 	shaback.pos += fprintf(shaback.fp_out,
 	    "SHABACK %020llu %llu %llu %llu %llu %llu %llu\n",
 	    shaback.magic, time(0), shaback.entries,
@@ -388,11 +496,11 @@ main(int argc, char **argv)
 	    shaback.index_offset + shaback.index_len + 512,
 	    shaback.index_offset / 512,
 	    (shaback.index_offset + shaback.index_len + 512) / 512);
+#endif
 
 	ep = shaback.first;
 	while (ep != NULL) {
 		if (ep->type == 'f') {
-			shaback_align(&shaback);
 			if (shaback_dump_file(&shaback, ep) == 0) {
 				shaback_align(&shaback);
 				len = shaback_print_entry(&shaback,
@@ -407,6 +515,9 @@ main(int argc, char **argv)
 		ep = ep->next;
 	}
 
+	if (shaback.dedup)
+		fprintf(stderr, "%llu dups\n", shaback.dups);
+
 	ep = shaback.first;
 	while (ep != NULL) {
 		shaback_align(&shaback);
@@ -418,8 +529,27 @@ main(int argc, char **argv)
 		ep = ep->next;
 	}
 	shaback_align(&shaback);
-	for (i = 0; i < 512; i++)
-		fputc('\0', shaback.fp_out);
 
-	fclose(fp);	
+	if (fseeko(shaback.fp_out, shaback.begin_offset, SEEK_SET) == -1)
+		warn("fseeko");
+
+	warnx("calculating offsets");
+	shaback_calculate_offsets(&shaback);
+	warnx("done");
+	shaback.pos = fprintf(shaback.fp_out,
+	    "SHABACK %020llu %llu %llu %llu %llu %llu %llu %llu %llu\n",
+	    shaback.magic,
+	    shaback.begin_time,
+	    shaback.entries,
+	    shaback.begin_offset,
+	    shaback.index_offset_blocks * 512,
+	    shaback.end_offset_blocks * 512,
+	    shaback.begin_offset / 512,
+	    shaback.index_offset_blocks,
+	    shaback.end_offset_blocks);
+	shaback_align(&shaback);
+
+	fclose(fp);
+	fclose(shaback.fp_out);
+	return 0;
 }
