@@ -232,11 +232,6 @@ shaback_dump_file(struct shaback *shaback, struct shaback_entry *ep)
 				if (hp->key[i] != ep->key[i])
 					break;
 			if (i != SHA1_DIGEST_LENGTH) {
-				if (hp->hashmap_next == NULL) {
-					hp->hashmap_next = ep;
-					hp = hp->hashmap_next;
-					break;
-				}
 				hp = hp->hashmap_next;
 			} else {
 				ep->offset = hp->offset;
@@ -246,6 +241,8 @@ shaback_dump_file(struct shaback *shaback, struct shaback_entry *ep)
 			}
 		}
 		if (hp == NULL) {
+			ep->hashmap_next =
+			    shaback->hashmap[numeric_key % HASHMAP_ALLOC];
 			shaback->hashmap[numeric_key % HASHMAP_ALLOC] = ep;
 
 			if (fseek(fp, 0, SEEK_SET) == -1)
