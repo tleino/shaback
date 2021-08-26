@@ -13,6 +13,8 @@ INSTALL ?= install
 INSTALLFLAGS ?= -D
 
 SRCS=\
+	test.c \
+	write.c \
 	shaback.c
 
 PROG=shaback
