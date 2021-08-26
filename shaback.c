@@ -197,10 +197,10 @@ shaback_dump_file(struct shaback *shaback, struct shaback_entry *ep)
 
 	SHA1Init(&sha);
 
-	ep->offset = shaback->pos;
-
-	if (shaback->dedup == 0)
+	if (shaback->dedup == 0) {
 		shaback_align(shaback);
+		ep->offset = shaback->pos;
+	}
 
 	while ((n = fread(buf, sizeof(char), sizeof(buf), fp)) > 0) {
 		if (shaback->dedup == 0) {
@@ -249,6 +249,8 @@ shaback_dump_file(struct shaback *shaback, struct shaback_entry *ep)
 				err(1, "fseek");
 
 			shaback_align(shaback);
+			ep->offset = shaback->pos;
+
 			while ((n = fread(buf, sizeof(char),
 			    sizeof(buf), fp)) > 0) {
 				fwrite(buf, sizeof(char), n,
