@@ -18,7 +18,7 @@ SRCS=\
 	shaback.c
 
 PROG=shaback
-MAN=shaback.1
+MAN=shaback.8
 
 OBJS=$(SRCS:.c=.o)
 
@@ -49,11 +49,11 @@ clean:
 install: $(PROG)
 	$(INSTALL) $(INSTALLFLAGS) $(PROG) $(DESTDIR)$(bindir)/$(PROG)
 	$(INSTALL) $(INSTALLFLAGS) -m 444 $(MAN) \
-		$(DESTDIR)$(mandir)/man1/$(MAN)
+		$(DESTDIR)$(mandir)/man8/$(MAN)
 
 uninstall:
 	rm -f $(DESTDIR)$(bindir)/$(PROG)
-	rm -f $(DESTDIR)$(mandir)/man1/$(MAN)
+	rm -f $(DESTDIR)$(mandir)/man8/$(MAN)
 
 .PHONY: deps
 
