@@ -1,80 +1,65 @@
-Shaback is a SHA-checksumming backup/restore tool, similar to tar(1),
-pax(1), dump(8), but
-
-   1) is free from file size or file name limits or byte-order issues
-   2) is very simple, no legacy cruft
-   3) does SHA-checksumming
-   4) builds an index and can restore single files fast
-   5) deduplicates fast
-   6) the format is mostly text-based, easy to work with
-
-Shaback uses some advantages that were not previously available.
-
-   1) RAM is cheap
-
-      Metadata can be kept in memory while dumping allowing things
-      like building an index and deduplication without constant
-      re-reading.
-
-   2) VFS cache can be leveraged
-
-      Reading twice is cheap and this is useful when doing
-      deduplication -- once for the hash calculation, once for the
-      data to be written if writing is needed. These reads will be
-      done one after another, caching will work if the file fits to
-      cache.
-
-   3) Seeking is possible
-
-      When doing network backup with stream redirection, or when
-      backing up to a tape drive, seeking is not possible or it is
-      expensive. Shaback supports these scenarios, but some features
-      such as deduplication or incremental backup requires seeking
-      a few times (like once or twice). There will be no seeking
-      overhead when using mechanical HDDs because shaback is still
-      very linear.
+Shaback is a SHA-checksumming backup/restore tool, similar to
+tar(1), pax(1), dump(8) but with proper checksums.
 
 USE AT YOUR OWN RISK! NOT YET TESTED VERY WELL!
 
-Example:
+Shaback archives should be written directly to raw mass storage
+device without a filesystem layer in between because Shaback
+writes data mostly linearly and there is only a minimal amount
+of seeking. When compared to tools like rsync(1), it should be
+much faster to write linearly to raw disk.
 
-   # Build new archive
-   find / -print0 | shaback -0 -w /tmp/test
+Shaback uses some advantages that were not previously available
+when doing backups: now RAM is cheap, VFS caches can be huge and
+can be leveraged and some seeking is possible that is unless you're
+one of the rare persons who still uses tape backup. For these
+reasons, Shaback can be a better / faster choice than the legacy
+alternatives, or the end result is a smaller archive size.
 
-   # Extract the index from archive
-   OFFSET=$(head -1 /tmp/test | awk '{ print $7 }')
-   dd if=/tmp/test bs=512 skip=$OFFSET
+Features:
 
-   # Extract particular file
-   FILE_OFFSET=$(expr $(dd if=/tmp/test bs=512 skip=$OFFSET | \
-      grep -m1 file | awk '{ print $2 }') / 512)
-   FILE_SIZE=$(expr $(dd if=/tmp/test bs=512 skip=$OFFSET | \
-      grep -m1 file | awk '{ print $11 }') / 512)
-   dd if=/tmp/test bs=512 skip=$FILE_OFFSET count=$FILE_SIZE
+  1) Free from file size or file name limits or byte-order issues
 
-Builds an image like this:
+     Numbers and strings are stored in a text-format.
 
-   SHABACK <shaback magic number> <begin time> <entries>
-   <begin offset> <index offset> <end offset>
-   <begin offset in blocks> <index offset in blocks>
-   <end offset in blocks>\n
+  2) Does SHA-checksumming
 
-And then files are dumped one by one, and each followed by a metadata
-section:
+     Testing of backups is important. Shaback archives can be tested
+     without writing data.
 
-   <shaback magic number> <offset> <type> <inode> <ctime> <atime>
-   <mtime> <mode> <uid> <gid> <size> <hash meta> <hash file> <paths len>\n
-   <path>\0<link path>\0\n
+  3) Stores metadata to index blocks
 
-And lastly, all metadata sections are dumped once more at the index
-offset, i.e. metadata is duplicated (in case the index is corrupted).
+     Single files can be restored fast, yet we have recoverability
+     benefit of having metadata all around the disk.
 
-All entries are aligned to 512-byte blocks in case bad blocks corrupts
-something, rest of the blocks can be salvaged cleanly. There is also
-guaranteed to be a NUL-character after each block which means an empty
-block is added if the block ends at the 512-byte boundary.
+  4) Deduplicates fast
 
-The shaback magic number is a random number that is unique so that
-corrupted or partially broken backup can be restored.
+     Because SHA-checksumming is done anyways, and because VFS cache
+     can often be leveraged, and because the hashes can be kept in
+     memory, deduplication is almost free nowadays.
 
-Standard tools like dd can be used for restoring a corrupted archive.
+  5) The format is mostly text-based, easy to work with
+
+     For the recoverability.
+
+  6) Optional per-file compression
+
+     Better recoverability than with .tar.gz-like compression where
+     the whole stream is compressed and allows for avoiding
+     recompression or compressing too small files.
+
+Dependencies:
+
+  - libz
+  - Unix-like operating system such as OpenBSD
+
+To compile:
+
+  - ./configure
+  - make install
+
+To run:
+
+  $ shaback write /tmp/foo .
+  $ shaback check /tmp/foo
+  $ cd /tmp/outdir && shaback read /tmp/foo

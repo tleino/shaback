@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2021, Tommi Leino <namhas@gmail.com>
+ *
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
+
 #include "shaback.h"
 
 #include <sys/stat.h>
@@ -6,312 +22,328 @@
 #include <string.h>
 #include <stdlib.h>
 #include <err.h>
+#include <errno.h>
+#include <zlib.h>
+#include <fcntl.h>
 
-int
-shaback_print_entry(struct shaback *shaback, char **buf, size_t *bufsz,
-    struct shaback_entry *ep)
+static int				 write_blocks(struct shaback *,
+					    const char *, size_t);
+static int				 flush_blocks(struct shaback *);
+
+static int
+shaback_want_compress(struct shaback *shaback, struct shaback_entry *ep)
 {
-	int len = 0;
-	char output[SHA1_DIGEST_STRING_LENGTH];
-	uint64_t paths_len;
-	size_t path_len, link_len;
-	char *p;
+	const char			*p;
 
-	path_len = strlen((const char *) ep->path);
-	if (ep->link_path != NULL)
-		link_len = strlen((const char *) ep->link_path);
-
-	do {
-		if (len >= *bufsz) {
-			if (*bufsz == 0)
-				*bufsz = 512;
-			else
-				*bufsz *= 2;
-			*buf = realloc(*buf, *bufsz);
-			if (*buf == NULL)
-				return -1;
-		}
-
-		/*
-		 * Calculate the length of file path and link path which
-		 * are stored in format of 'file\0link\0\n' and in case link
-		 * is missing we have 'file\0\n' i.e. in addition to the
-		 * string length, we need to count 2-3 chars extra.
-		 */
-		paths_len = path_len + 1;
-		if (ep->link_path != NULL)
-			paths_len += link_len + 1;
-		paths_len++;	/* count '\n' */
-
-		len = snprintf(*buf, *bufsz, "%020llu %llu "
-		    "%c %llu %llu %llu %llu %llu %llu "
-		    "%llu %llu %s %s %llu\n",
-		    shaback->magic,
-		    ep->offset, ep->type, ep->inode, ep->ctime,
-		    ep->atime, ep->mtime,
-		    ep->mode, ep->uid, ep->gid, ep->size,
-		    ep->hash_meta, ep->hash_file, paths_len);
-
-		if (len + paths_len + 1 < *bufsz) {
-			p = *buf;
-			p += len;
-			memcpy(p, ep->path, path_len + 1);
-			p += path_len + 1;
-			if (ep->link_path != NULL) {
-				memcpy(p, ep->link_path, link_len + 1);
-				p += link_len + 1;
-			}
-			*p++ = '\n';
-			*p = '\0';
-		}
-		len += paths_len;
-	} while (len + 1 >= *bufsz);
-
-	if (strcmp(ep->hash_meta, "!") == 0) {
-		SHA1Data((u_int8_t *) *buf, len, output);
-		ep->hash_meta = strdup(output);
-		if (ep->hash_meta == NULL) {
-			ep->hash_meta = "!";
-			return -1;
-		}
-		return shaback_print_entry(shaback, buf, bufsz, ep);
+	if (1 || ep->size < 1024) {
+		shaback->too_small_to_compress++;
+		return 0;
 	}
 
-	return len;
-}
+	p = strrchr(ep->path, '.');
+	if (p == NULL)
+		return 1;
+	p++;
 
-int
-shaback_metadata_len(struct shaback *shaback, struct shaback_entry *ep)
-{
-	int r;
-	int len;
-	int m;
-
-	r = shaback_print_entry(shaback, &shaback->tmp_buf,
-	    &shaback->tmp_bufsz, ep);
-	if (r == -1)
-		return -1;
-
-	len = strlen(shaback->tmp_buf);
-	m = 512 - (len % 512);
-	len += m;
-
-	return len;
-}
-
-void
-shaback_calculate_offsets(struct shaback *shaback)
-{
-	struct shaback_entry *ep;
-	int mdlen;
-
-	shaback->index_offset_blocks = (shaback->begin_offset / 512);
-	shaback->index_offset_blocks += 1;	/* header block */
-	for (ep = shaback->first; ep != NULL; ep = ep->next) {
-		if (shaback->dupmeta) {
-			mdlen = shaback_metadata_len(shaback, ep);
-			shaback->index_offset_blocks += (mdlen / 512);
-		}
-		if (ep->type != 'f' || ep->is_dup)
-			continue;
-		shaback->index_offset_blocks += ((512 + ep->size) / 512);
+	if (strcasecmp(p, "gz") == 0 || strcasecmp(p, "Z") == 0 ||
+	    strcasecmp(p, "bz2") == 0 || strcasecmp(p, "tgz") == 0 ||
+	    strcasecmp(p, "zip") == 0 || strcasecmp(p, "aac") == 0 ||
+	    strcasecmp(p, "mp4") == 0 || strcasecmp(p, "jpg") == 0 ||
+	    strcasecmp(p, "gif") == 0 || strcasecmp(p, "png") == 0 ||
+	    strcasecmp(p, "cr2") == 0 || strcasecmp(p, "dng") == 0 ||
+	    strcasecmp(p, "flac") == 0) {
+		shaback->already_compressed++;
+		return 0;
 	}
 
-	shaback->end_offset_blocks = shaback->index_offset_blocks;
-	for (ep = shaback->first; ep != NULL; ep = ep->next) {
-		mdlen = shaback_metadata_len(shaback, ep);
-		shaback->end_offset_blocks += (mdlen / 512);
-	}
+	return 1;
 }
 
-int
-shaback_dump_file(struct shaback *shaback, struct shaback_entry *ep)
+static int
+shaback_dump_file(struct shaback *shaback, int fd, struct shaback_entry *ep)
 {
-	FILE *fp;
-	size_t n;
-	static char buf[1024 * 16];
-	SHA1_CTX sha;
-	char output[SHA1_DIGEST_STRING_LENGTH] = { 0 }, *p;
-	size_t i;
-	struct shaback_entry *hp;
-	uint64_t numeric_key;
+	ssize_t				 n;
+	size_t				 total, i;
+	static char			 buf[1024 * 64];
+	SHA1_CTX			 sha;
+	char				 s[SHA1_DIGEST_STRING_LENGTH]={0}, *p;
+	uint64_t			 numeric_key;
 
-	fp = fopen((char *) ep->path, "r");
-	if (fp == NULL)
-		return -1;
+	ep->offset = shaback->pos;
 
 	SHA1Init(&sha);
 
-	if (shaback->dedup == 0) {
-		shaback_align(shaback);
-		ep->offset = shaback->pos;
-	}
-
-	while ((n = fread(buf, sizeof(char), sizeof(buf), fp)) > 0) {
-		if (shaback->dedup == 0) {
-			fwrite(buf, sizeof(char), n, shaback->fp_out);
-			shaback->pos += n;
-		}
+	while ((n = read(fd, buf, sizeof(buf))) > 0) {
 		SHA1Update(&sha, (u_int8_t *) buf, n);
 	}
-	if (ferror(fp)) {
-		fclose(fp);
-		return -1;
-	}
-
 	SHA1Final((u_int8_t *) ep->key, &sha);
-	p = output;
+	if (n < 0)
+		return -1;
+
+	p = s;
 	numeric_key = 0;
 	for (i = 0; i < SHA1_DIGEST_LENGTH; i++) {
 		p += snprintf(p, 2 + 1, "%02x", ep->key[i]);
 		numeric_key ^= (ep->key[i] << (i * 2));
 	}
 
-	/*
-	 * Add to hashmap.
-	 */
-	if (shaback->dedup == 1) {
-		hp = shaback->hashmap[numeric_key % HASHMAP_ALLOC];
-		while (hp != NULL) {
-			for (i = 0; i < SHA1_DIGEST_LENGTH; i++)
-				if (hp->key[i] != ep->key[i])
-					break;
-			if (i != SHA1_DIGEST_LENGTH) {
-				hp = hp->hashmap_next;
-			} else {
-				ep->offset = hp->offset;
-				ep->is_dup = 1;
-				shaback->dups++;
-				break;
-			}
-		}
-		if (hp == NULL) {
-			ep->hashmap_next =
-			    shaback->hashmap[numeric_key % HASHMAP_ALLOC];
-			shaback->hashmap[numeric_key % HASHMAP_ALLOC] = ep;
-
-			if (fseek(fp, 0, SEEK_SET) == -1)
-				err(1, "fseek");
-
-			shaback_align(shaback);
-			ep->offset = shaback->pos;
-
-			while ((n = fread(buf, sizeof(char),
-			    sizeof(buf), fp)) > 0) {
-				fwrite(buf, sizeof(char), n,
-				    shaback->fp_out);
-				shaback->pos += n;
-			}
-			if (ferror(fp)) {
-				fclose(fp);
-				return -1;
-			}
-		}
-	}
-
-	ep->hash_file = strdup((const char *) output);
+	ep->hash_file = strdup((const char *) s);
 	if (ep->hash_file == NULL) {
 		ep->hash_file = "!";
-		fclose(fp);
 		return -1;
 	}
 
-	fclose(fp);
+	shaback->n_total++;
+	if (shaback_dedup(shaback, ep, numeric_key) == 0) {
+		int			 ret, flush;
+		unsigned int		 have;
+		z_stream		 strm;
+		int			 want;
+		unsigned char		 out[1024 * 64];
+		size_t			 total_out;
+
+		want = shaback_want_compress(shaback, ep);
+
+		if (lseek(fd, 0, SEEK_SET) == -1) {
+			warn("lseek");
+			return 0;
+		}
+
+		total = 0;
+		if (want) {
+			strm.zalloc = Z_NULL;
+			strm.zfree = Z_NULL;
+			strm.opaque = Z_NULL;
+			ret = deflateInit(&strm, 1 /*Z_DEFAULT_COMPRESSION */);
+			if (ret != Z_OK)
+				want = 0;
+		}
+		if (want) {
+			shaback->n_compressed++;
+			total_out = 0;
+			do {
+				n = read(fd, buf, sizeof(buf));
+				if (n == -1) {
+					warn("read");
+					break;
+				}
+				total += n;
+
+				strm.avail_in = n;
+				strm.next_in = buf;
+				flush = (n == 0) ? Z_FINISH : Z_NO_FLUSH;
+
+				do {
+					strm.avail_out = 1024 * 64;
+					strm.next_out = out;
+
+					ret = deflate(&strm, flush);
+					if (ret == Z_STREAM_ERROR) {
+						warnx("compress error");
+						break;
+					}
+					have = (1024 * 64) - strm.avail_out;
+
+					total_out += have;
+					ep->compressed_size += have;
+					if (write_blocks(shaback, out, have)
+					    == -1)
+						return -1;
+				} while (strm.avail_out == 0);
+			} while (flush != Z_FINISH);
+			deflateEnd(&strm);
+			shaback->n_bytes_compressed += (total_out - ep->size);
+		} else {
+			while ((n = read(fd, buf, sizeof(buf))) > 0) {
+				total += n;
+				if (write_blocks(shaback, buf, n) == -1)
+					return -1;
+			}
+		}
+
+		shaback->n_bytes += ep->size;
+		flush_blocks(shaback);
+
+		if (total != ep->size) {
+			warnx("adjust size %s", ep->path);
+			ep->size = total;
+		}
+	} else {
+		shaback->n_duplicated++;
+		shaback->n_bytes_dedup -= ep->size;
+		shaback->n_bytes += ep->size;
+	}
+
+	return (n == -1) ? -1 : total;
+}
+
+static int
+flush_blocks(struct shaback *shaback)
+{
+	size_t			 off;
+	ssize_t			 nw;
+	size_t			 bsz;
+
+	if (shaback->bbuf_sz != sizeof(shaback->bbuf)) {
+		bsz = shaback->bbuf_sz;
+		if (bsz % 512 != 0)
+			bsz = ((bsz/512) * 512) + 512;
+
+		/*
+		 * This memset here is purely for cosmetic reasons.
+		 */
+		memset(&shaback->bbuf[shaback->bbuf_sz], '\0',
+		    bsz - shaback->bbuf_sz);
+	} else {
+		bsz = sizeof(shaback->bbuf);
+	}
+
+	for (off = 0; off < bsz; off += nw)
+		if ((nw = write(shaback->fd, shaback->bbuf + off,
+		    bsz - off)) == 0 ||
+		    nw == -1) {
+			warn("%s bsz: %zu off %zu nw %zd", shaback->target,
+			    bsz, off, nw);
+			errno = 0;
+			return -1;
+		}
+
+	shaback->pos += bsz;
+	shaback->bbuf_sz = 0;
 	return 0;
 }
 
-void
-shaback_align(struct shaback *shaback)
+static int
+write_blocks(struct shaback *shaback, const char *buf, size_t bsz)
 {
-	uint64_t m;
-	uint64_t i;
+	char *p;
+	size_t remaining, len;
+	size_t orig_bsz;
 
-	m = 512 - (shaback->pos % 512);
-	for (i = 0; i < m; i++)
-		fputc('\0', shaback->fp_out);
-	shaback->pos += m;
+	orig_bsz = bsz;	
+
+	while (bsz) {
+		if (shaback->bbuf_sz == sizeof(shaback->bbuf))
+			flush_blocks(shaback);
+		remaining = sizeof(shaback->bbuf) - shaback->bbuf_sz;
+		p = &shaback->bbuf[shaback->bbuf_sz];
+		len = remaining < bsz ? remaining : bsz;
+		memcpy(p, buf, remaining < bsz ? remaining : bsz);
+		bsz -= len;
+		shaback->bbuf_sz += len;
+	}
+
+	return orig_bsz;
 }
 
-void
-shaback_add(struct shaback *shaback, const char *path)
+static int
+dump(struct shaback *shaback, int fd, const char *path, struct stat *sb)
 {
-	struct stat sb;
-	struct shaback_entry e = { 0 }, *ep;
-	ssize_t n;
-	char buf[PATH_MAX + 1];
-	int len;
+	struct shaback_entry e = {0}, *ep;
+	size_t curpos = 0;
 
-	if (lstat(path, &sb) != 0) {
-		warn("lstat %s", path);
-		return;
+	ep = &e;
+
+	if ((ep->path = strdup(path)) == NULL) {
+		return -1;
 	}
 
-	if (S_ISDIR(sb.st_mode)) {
-		shaback->dirs++;
-		e.type = 'd';
-	} else if (S_ISLNK(sb.st_mode)) {
-		shaback->symlinks++;
-		e.type = 'l';
-		n = readlink(path, buf, sizeof(buf) - 1);
-		if (n <= 0)
-			warn("readlink %s", path);
-		else {
-			buf[n] = '\0';
-			e.link_path = (unsigned char *) strdup(buf);
+	if (read_meta(shaback, ep, sb) == -1) {
+		free(ep->path);
+		return -1;
+	}
+
+	if (S_ISREG(sb->st_mode) && ep->size > 0) {
+		if (shaback_dump_file(shaback, fd, ep) == -1) {
+			free(ep->path);
+			free(ep);
+			return 1;
 		}
-	} else if (S_ISREG(sb.st_mode)) {
-		shaback->regulars++;
-		e.type = 'f';
-	} else {
-		warnx("%s: unsupported file type", path);
-		return;
+
+		curpos = shaback->pos;
 	}
 
-	e.inode = sb.st_ino;
-	e.ctime = sb.st_ctim.tv_sec;
-	e.mtime = sb.st_mtim.tv_sec;
-	e.atime = sb.st_atim.tv_sec;
-	e.uid = sb.st_uid;
-	e.gid = sb.st_gid;
-	e.size = sb.st_size;
-	e.path = (unsigned char *) strdup(path);
-	if (e.path == NULL) {
-		warn("strdup %s", path);
-		return;
-	}
+	shaback_add_index_entry(shaback, ep);
+	free(ep->path);
 
-	e.hash_meta = "!";
-	e.hash_file = "!";
+	if (ep->link_path)
+		free(ep->link_path);
+	if (ep->hash_file != NULL && *ep->hash_file != '!')
+		free(ep->hash_file);
+	if (ep->hash_meta != NULL && *ep->hash_meta != '!')
+		free(ep->hash_meta);
 
-	ep = malloc(sizeof(struct shaback_entry));
-	if (ep == NULL) {
-		warn("malloc shaback_entry %s", path);
-		return;
-	}
-	*ep = e;
-
-	ep->next = shaback->first;
-	shaback->first = ep;
 	shaback->entries++;
 
-	if (e.type == 'f') {
+	return 0;
+}
 
-		/*
-		 * Calculate new index offset, with padding if needed.
-		 */
-		shaback->index_offset += (512 - (e.size % 512));
-		shaback->index_offset += e.size;
+int
+shaback_write(struct shaback *shaback, int argc, char **argv)
+{
+	size_t i;
+	int ret;
+	char *arg1[1], **args;
+
+	shaback->target = *argv++;
+	argc--;
+
+	if (1 || shaback->dedup) {
+		shaback->hashmap = calloc(HASHMAP_ALLOC,
+		    sizeof(struct shaback_hash_entry *));
+		if (shaback->hashmap == NULL)
+			err(1, "calloc");
+	}
+
+	if ((shaback->fd = open(shaback->target,
+	    O_WRONLY | O_CREAT | O_TRUNC,
+	    S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH)) == -1) {
+		warn("%s", shaback->target);
+		return -1;
 	}
 
 	/*
-	 * Calculate new index offset, with the added metadata.
+	 * Reserve space for the index.
 	 */
-	len = shaback_metadata_len(shaback, ep);
-	if (len == -1)
-		err(1, "shaback_metadata_len");
+	shaback->pos = INDEX_SIZE;
+	if (lseek(shaback->fd, INDEX_SIZE, SEEK_SET) == -1)
+		err(1, "lseek");
+	shaback->index.offset = 0;
+	shaback->index.len = 512;
 
-	if (e.type == 'f')
-		shaback->index_offset += len;
+	if (argc == 0) {
+		arg1[argc++] = ".";
+		args = arg1;
+	} else
+		args = argv;
 
-	shaback->index_len += len;
+	for (i = 0; i < argc; i++) {
+		ret = shaback_dirwalk(shaback, AT_FDCWD, args[i], dump);
+		if (ret == -1)
+			warn("%s", args[i]);
+	}
+
+	shaback_flush_index(shaback);
+
+	printf("%16zd\tactual (KB)\n"
+	    "%16zd\tcompress (KB)\n%16zd\tdedup (KB)\n%16zd\tfinal (KB)\n"
+	    "%16d\tdups\n"
+	    "%16d\tcompressed\n"
+	    "%16d\ttoo small to compress\n"
+	    "%16d\talready compressed\n"
+	    "%16d\ttotal\n",
+	    shaback->n_bytes / 1024,
+	    shaback->n_bytes_compressed / 1024,
+	    shaback->n_bytes_dedup / 1024,
+	    (shaback->n_bytes + shaback->n_bytes_compressed +
+	    shaback->n_bytes_dedup) / 1024,
+	    shaback->n_duplicated,
+	    shaback->n_compressed,
+	    shaback->too_small_to_compress,
+	    shaback->already_compressed,
+	    shaback->n_total);
+
+	close(shaback->fd);
+
+	return ret;
 }

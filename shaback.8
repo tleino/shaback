@@ -1,4 +1,4 @@
-.Dd $Mdocdate: August 26 2021 $
+.Dd $Mdocdate: September 5 2021 $
 .Dt SHABACK 8
 .Os
 .Sh NAME
@@ -6,34 +6,43 @@
 .Nd SHA-checksummed backup
 .Sh SYNOPSIS
 .Nm shaback
+write
 .Bk -words
-.Op Fl 0adDt
-.Op Fl w Ar device or file
+.Ar target
+.Op Ar file Ar ...
+.Ek
+.Nm
+read
+.Ar target
+.Ek
+.Nm
+check
+.Ar target
 .Ek
 .Sh DESCRIPTION
 .Nm
-receives list of files from standard input and writes the files,
-including metadata in an easily repairable, linear, checksummed
-to device or file.
+is a SHA-checksumming backup/restore tool, similar to
+tar(1), pax(1), dump(8) but with proper checksums.
 .Pp
-The options are as follows:
-.Bl -tag -width Ds
-.It Fl 0
-Assume NUL-terminated file list.
-.It Fl a
-Append to end for incremental backups. Requires seekable media.
-.It Fl d
-Deduplication. Write only unique data.
-.It Fl D
-Reduce redundancy of metadata by only writing metadata once. In
-practices does not duplicate metadata after the data, but writes
-the metadata only to the index at the end of the resulting
-backup image.
-.It Fl t
-Run checksum testing for the data based on the embedded SHA1
-checksums.
-.It Fl w Ar device or file
-Specifies the device or file that is used for writing or reading.
+USE AT YOUR OWN RISK! NOT YET TESTED VERY WELL!
+.Pp
+.Nm
+archives should be written directly to raw mass storage
+device without a filesystem layer in between because
+.Nm
+writes data mostly linearly and there is only a minimal amount
+of seeking. When compared to tools like rsync(1), it should be
+much faster to write linearly to raw disk.
+.Pp
+.Nm
+uses some advantages that were not previously available
+when doing backups: now RAM is cheap, VFS caches can be huge and
+can be leveraged and some seeking is possible that is unless you're
+one of the rare persons who still uses tape backup. For these
+reasons,
+.Nm
+can be a better / faster choice than the legacy
+alternatives, or the end result is a smaller archive size.
 .Sh SEE ALSO
 .Xr dump 8 ,
 .Xr tar 1

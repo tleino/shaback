@@ -1,6 +1,7 @@
 SHELL = /bin/sh
-CFLAGS = -g -Wall -pedantic -std=c99 -Wfatal-errors -Werror @SYSTEM_CFLAGS@
-LDFLAGS = @SYSTEM_LDFLAGS@
+#CFLAGS = -g -Wall -pedantic -std=c99 -Wfatal-errors -Werror @SYSTEM_CFLAGS@
+CFLAGS = -g -Wall
+LDFLAGS = @SYSTEM_LDFLAGS@ -lz
 
 prefix = @prefix@
 exec_prefix = $(prefix)
@@ -13,8 +14,13 @@ INSTALL ?= install
 INSTALLFLAGS ?= -D
 
 SRCS=\
-	test.c \
+	meta.c \
+	read.c \
+	dedup.c \
+	index.c \
+	check.c \
 	write.c \
+	dirwalk.c \
 	shaback.c
 
 PROG=shaback
