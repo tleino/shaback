@@ -67,7 +67,7 @@ shaback_dump_file(struct shaback *shaback, int fd, struct shaback_entry *ep)
 {
 	ssize_t				 n;
 	size_t				 total, i;
-	static char			 buf[1024 * 64];
+	static char			 buf[CHUNK];
 	SHA1_CTX			 sha;
 	char				 s[SHA1_DIGEST_STRING_LENGTH]={0}, *p;
 	uint64_t			 numeric_key;
@@ -155,7 +155,7 @@ shaback_dump_file(struct shaback *shaback, int fd, struct shaback_entry *ep)
 		unsigned int		 have;
 		z_stream		 strm;
 		int			 want;
-		unsigned char		 out[1024 * 64];
+		static unsigned char	 out[CHUNK];
 		size_t			 total_out;
 
 		want = shaback_want_compress(shaback, ep);
@@ -190,7 +190,7 @@ shaback_dump_file(struct shaback *shaback, int fd, struct shaback_entry *ep)
 				flush = (n == 0) ? Z_FINISH : Z_NO_FLUSH;
 
 				do {
-					strm.avail_out = 1024 * 64;
+					strm.avail_out = CHUNK;
 					strm.next_out = out;
 
 					ret = deflate(&strm, flush);
@@ -198,7 +198,7 @@ shaback_dump_file(struct shaback *shaback, int fd, struct shaback_entry *ep)
 						warnx("compress error");
 						break;
 					}
-					have = (1024 * 64) - strm.avail_out;
+					have = (CHUNK) - strm.avail_out;
 
 					total_out += have;
 					ep->compressed_size += have;

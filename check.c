@@ -32,7 +32,7 @@ static uint64_t				 ok, fail;
 int
 verify_hash(struct shaback *shaback, struct shaback_entry *ep)
 {
-	static char			 buf[1024 * 64];
+	static char			 buf[CHUNK];
 	ssize_t				 n;
 	size_t				 sz, i;
 	ssize_t				 remaining;

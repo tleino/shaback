@@ -31,7 +31,7 @@ restore_file(struct shaback *shaback, struct shaback_entry *ep)
 {
 	int fd;
 	char *p;
-	static char buf[1024 * 64];
+	static char buf[CHUNK];
 	ssize_t n;
 	size_t sz;
 	ssize_t remaining;
@@ -79,7 +79,7 @@ restore_file(struct shaback *shaback, struct shaback_entry *ep)
 			int ret;
 			unsigned have;
 			z_stream strm;
-			unsigned char out[1024 * 64];
+			unsigned char out[CHUNK];
 
 			if (ep->is_dup)
 				printf("%s (uncompress, redup)\n", ep->path);
@@ -110,7 +110,7 @@ restore_file(struct shaback *shaback, struct shaback_entry *ep)
 				strm.next_in = buf;
 
 				do {
-					strm.avail_out = 1024 * 64;
+					strm.avail_out = CHUNK;
 					strm.next_out = out;
 
 					ret = inflate(&strm, Z_NO_FLUSH);
@@ -124,7 +124,7 @@ restore_file(struct shaback *shaback, struct shaback_entry *ep)
 						return -1;
 					}
 
-					have = (1024*64) - strm.avail_out;
+					have = (CHUNK) - strm.avail_out;
 					write(fd, out, have);
 					remaining -= n;
 				} while (strm.avail_out == 0);

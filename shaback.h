@@ -27,6 +27,7 @@
 
 #define HASHMAP_ALLOC	(1024 * 1024)
 #define INDEX_SIZE	(512 * 2048)
+#define CHUNK		(512 * 4096)
 
 struct shaback_hash_entry
 {
@@ -95,7 +96,7 @@ struct shaback
 	size_t path_len;
 	int fd;
 	const char *target;
-	unsigned char bbuf[1024 * 64];
+	unsigned char bbuf[CHUNK];
 	size_t bbuf_sz;
 	struct shaback_index index;
 	int n_duplicated;
