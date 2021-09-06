@@ -26,17 +26,93 @@
 #include <zlib.h>
 #include <fcntl.h>
 
+static uint64_t				 ok_bytes, fail_bytes;
+static uint64_t				 ok, fail;
+
+int
+verify_hash(struct shaback *shaback, struct shaback_entry *ep)
+{
+	static char			 buf[1024 * 64];
+	ssize_t				 n;
+	size_t				 sz, i;
+	ssize_t				 remaining;
+	SHA1_CTX			 sha;
+	char				 s[SHA1_DIGEST_STRING_LENGTH]={0}, *p;
+
+	if (ep->type != 'f' || ep->is_dup || ep->size == 0)
+		return 0;
+
+	if (lseek(shaback->fd, ep->offset, SEEK_SET) == -1) {
+		warn("lseek");
+		return -1;
+	}
+
+	remaining = ep->size;
+
+	SHA1Init(&sha);
+	while (remaining > 0) {
+		sz = remaining < sizeof(buf) ? remaining :
+		    sizeof(buf);
+		if (sz != sizeof(buf))
+			sz = sz/512*512+512;
+		n = read(shaback->fd, buf, sz);
+		if (n == -1 || n == 0)
+			break;
+		SHA1Update(&sha, (u_int8_t *) buf,
+		    remaining < n ? remaining : n);
+		remaining -= n;
+	}
+	SHA1Final((u_int8_t *) ep->key, &sha);
+
+	p = s;
+	for (i = 0; i < SHA1_DIGEST_LENGTH; i++)
+		p += snprintf(p, 2 + 1, "%02x", ep->key[i]);
+
+	if (strcmp(ep->hash_file, s) != 0) {
+		printf("is        : '%s'\n", s);
+		printf("should be : '%s'\n", ep->hash_file);
+		return -1;
+	}
+
+	return 0;
+}
+
 int
 check(struct shaback *shaback, struct shaback_entry *ep)
 {
-	if (ep->type == 'f' && ep->is_dup == 0)
-		printf("%16llu %s\n", ep->size, ep->path);
-	else if (ep->type == 'f' && ep->is_dup == 1)
-		printf("DUP              %s\n", ep->path);
-	else
-		printf("%c                %s\n", ep->type, ep->path);
+	/*
+	 * TODO: verify compressed files.
+	 */
+	if (ep->compressed_size > 0) {
+		warnx("check on compressed files not supported");
+		return 1;
+	}
+
+	if (verify_hash(shaback, ep) == -1) {
+		warnx("fail %s", ep->path);
+		fail_bytes += ep->size;
+		fail++;
+		return 0;
+	}
+
+	ok_bytes += ep->size;
+	ok++;
 
 	return 0;
+}
+
+static void
+print_results()
+{
+	printf(
+	    "%16llu checksum ok (files)\n"
+	    "%16llu checksum ok (MBytes)\n"
+	    "%16llu checksum ok (bytes)\n"
+	    "%16llu checksum fail (files)\n"
+	    "%16llu checksum fail (MBytes)\n"
+	    "%16llu checksum fail (bytes)\n",
+	    ok, ok_bytes/1024/1024, ok_bytes, fail, fail_bytes/1024/1024,
+	    fail_bytes);
 }
 
 int
@@ -58,9 +134,11 @@ shaback_check(struct shaback *shaback, int argc, char **argv)
 	if (shaback_read_index(shaback, check) == -1) {
 		warn("shaback_read_index");
 		close(shaback->fd);
+		print_results();
 		return -1;
 	}
 
 	close(shaback->fd);
+	print_results();
 	return 0;
 }
