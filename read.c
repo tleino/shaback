@@ -63,7 +63,11 @@ restore_file(struct shaback *shaback, struct shaback_entry *ep)
 			warn("mkdir %s", ep->path);
 			return -1;
 		}
-		return 0;
+	} else if (ep->type == 'l') {
+		if (symlink(ep->link_path, p) == -1) {
+			warn("symlink %s", p);
+			return -1;
+		}
 	} else if (ep->type == 'f') {
 		fd = open(p, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW,
 		    ep->mode);
