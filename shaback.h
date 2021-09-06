@@ -109,10 +109,12 @@ struct shaback
 /*
  * commands:
  *   check.c
+ *   list.c
  *   write.c
  *   read.c
  */
 int				 shaback_check(struct shaback *, int, char **);
+int				 shaback_list(struct shaback *, int, char **);
 int				 shaback_write(struct shaback *, int, char **);
 int				 shaback_read(struct shaback *, int, char **);
 
