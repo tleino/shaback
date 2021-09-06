@@ -121,6 +121,11 @@ int				 shaback_write(struct shaback *, int, char **);
 int				 shaback_read(struct shaback *, int, char **);
 
 /*
+ * write.c
+ */
+int				 shaback_flush_blocks(struct shaback *);
+
+/*
  * dirwalk.c
  */
 struct stat;

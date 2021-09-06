@@ -28,7 +28,7 @@
 
 static int				 write_blocks(struct shaback *,
 					    const char *, size_t);
-static int				 flush_blocks(struct shaback *);
+static int				 pad_blocks(struct shaback *);
 
 static int
 shaback_want_compress(struct shaback *shaback, struct shaback_entry *ep)
@@ -72,31 +72,30 @@ shaback_dump_file(struct shaback *shaback, int fd, struct shaback_entry *ep)
 	char				 s[SHA1_DIGEST_STRING_LENGTH]={0}, *p;
 	uint64_t			 numeric_key;
 	off_t				 orig_offset;
+	int				 flushes;
+	off_t				 orig_pos;
+	size_t				 orig_bbuf_sz;
 
-	ep->offset = shaback->pos;
+	orig_pos = shaback->pos;
+	orig_bbuf_sz = shaback->bbuf_sz;
+
+	ep->offset = shaback->pos + shaback->bbuf_sz;
 
 	SHA1Init(&sha);
 
 	total = 0;
+	flushes = 0;
 	while ((n = read(fd, buf, sizeof(buf))) > 0) {
 		SHA1Update(&sha, (u_int8_t *) buf, n);
 
 		if (shaback->dedup_overwrite) {
 			total += n;
-			if (write_blocks(shaback, buf, n) == -1)
+			flushes += write_blocks(shaback, buf, n);
+			if (flushes == -1)
 				return -1;
 		}
 	}
 	SHA1Final((u_int8_t *) ep->key, &sha);
-	if (shaback->dedup_overwrite) {
-		shaback->n_bytes += ep->size;
-		flush_blocks(shaback);
-
-		if (total != ep->size) {
-			warnx("adjust size %s", ep->path);
-			ep->size = total;
-		}
-	}
 	if (n < 0)
 		return -1;
 
@@ -118,13 +117,38 @@ shaback_dump_file(struct shaback *shaback, int fd, struct shaback_entry *ep)
 	orig_offset = ep->offset;
 	if (shaback->dedup_overwrite &&
 	    shaback_dedup(shaback, ep, numeric_key) == 1) {
-		total -= ep->size;
 		shaback->n_duplicated++;
 		shaback->n_bytes_dedup -= ep->size;
 		shaback->n_bytes += ep->size;
-		if (lseek(shaback->fd, orig_offset, SEEK_SET) == -1)
-			return -1;
-		shaback->pos = orig_offset;
+
+		/*
+		 * If we have already flushed, the data that was
+		 * buffered prior to this file should be written out
+		 * so that we can simply discard any content in the
+		 * buffer we may have about this file.
+		 *
+		 * Otherwise, we need to reset the buffer back to
+		 * how it looked before attempting to write this
+		 * duplicated file.
+		 */
+		if (flushes > 0) {
+			shaback->bbuf_sz = 0;
+			shaback->pos = orig_offset;
+			if (lseek(shaback->fd, orig_offset, SEEK_SET) == -1)
+				return -1;
+		} else {
+			shaback->bbuf_sz = orig_bbuf_sz;
+			shaback->pos = orig_pos;
+		}
+		total -= ep->size;
+	} else if (shaback->dedup_overwrite) {
+		shaback->n_bytes += ep->size;
+		pad_blocks(shaback);
+
+		if (total != ep->size) {
+			warnx("adjust size %s", ep->path);
+			ep->size = total;
+		}
 	} else if (!shaback->dedup_overwrite &&
 	    shaback_dedup(shaback, ep, numeric_key) == 0) {
 		int			 ret, flush;
@@ -179,8 +203,10 @@ shaback_dump_file(struct shaback *shaback, int fd, struct shaback_entry *ep)
 					total_out += have;
 					ep->compressed_size += have;
 					if (write_blocks(shaback, out, have)
-					    == -1)
+					    == -1) {
+						pad_blocks(shaback);
 						return -1;
+					}
 				} while (strm.avail_out == 0);
 			} while (flush != Z_FINISH);
 			deflateEnd(&strm);
@@ -188,13 +214,15 @@ shaback_dump_file(struct shaback *shaback, int fd, struct shaback_entry *ep)
 		} else {
 			while ((n = read(fd, buf, sizeof(buf))) > 0) {
 				total += n;
-				if (write_blocks(shaback, buf, n) == -1)
+				if (write_blocks(shaback, buf, n) == -1) {
+					pad_blocks(shaback);
 					return -1;
+				}
 			}
 		}
 
 		shaback->n_bytes += ep->size;
-		flush_blocks(shaback);
+		pad_blocks(shaback);
 
 		if (total != ep->size) {
 			warnx("adjust size %s", ep->path);
@@ -209,8 +237,8 @@ shaback_dump_file(struct shaback *shaback, int fd, struct shaback_entry *ep)
 	return (n == -1) ? -1 : total;
 }
 
-static int
-flush_blocks(struct shaback *shaback)
+int
+shaback_flush_blocks(struct shaback *shaback)
 {
 	size_t			 off;
 	ssize_t			 nw;
@@ -246,26 +274,53 @@ flush_blocks(struct shaback *shaback)
 }
 
 static int
+pad_blocks(struct shaback *shaback)
+{
+	static char buf[512];
+	int m;
+
+	/*
+	 * This is purely for cosmetic reasons.
+	 */
+	memset(buf, '\0', 512);
+
+	m = (shaback->bbuf_sz / 512 * 512) - shaback->bbuf_sz;
+	if (m < 0)
+		m += 512;
+	if (m != 0)
+		return write_blocks(shaback, buf, m);
+	return 0;
+}
+
+/*
+ * Returns flushed count or -1 if we got error when flushing.
+ */
+static int
 write_blocks(struct shaback *shaback, const char *buf, size_t bsz)
 {
 	char *p;
 	size_t remaining, len;
 	size_t orig_bsz;
+	int flushes = 0;
 
 	orig_bsz = bsz;	
 
 	while (bsz) {
-		if (shaback->bbuf_sz == sizeof(shaback->bbuf))
-			flush_blocks(shaback);
+		if (shaback->bbuf_sz == sizeof(shaback->bbuf)) {
+			if (shaback_flush_blocks(shaback) == -1)
+				return -1;
+			flushes++;
+		}
+
 		remaining = sizeof(shaback->bbuf) - shaback->bbuf_sz;
 		p = &shaback->bbuf[shaback->bbuf_sz];
 		len = remaining < bsz ? remaining : bsz;
-		memcpy(p, buf, remaining < bsz ? remaining : bsz);
+		memcpy(p, &buf[orig_bsz - bsz], remaining < bsz ? remaining : bsz);
 		bsz -= len;
 		shaback->bbuf_sz += len;
 	}
 
-	return orig_bsz;
+	return flushes;
 }
 
 static int

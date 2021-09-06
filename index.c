@@ -114,6 +114,8 @@ shaback_flush_index(struct shaback *shaback)
 	static time_t t;
 	time_t now, diff;
 
+	shaback_flush_blocks(shaback);
+
 	snprintf(shaback->index.buf, 512,
 	    "SHABACK INDEX %llu %llu %d\n", shaback->index.entries,
 	    shaback->pos, INDEX_SIZE);
