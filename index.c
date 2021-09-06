@@ -319,6 +319,8 @@ shaback_read_index(struct shaback *shaback, IndexCallback cb)
 		n = read_str_delim(p, end - p, ' ', &e.hash_file, &alloc);
 		if (n == -1)
 			break;
+		if (n > 0)
+			e.hash_file[n-1] = '\0';
 		p += n;
 
 		/* hash_meta */
