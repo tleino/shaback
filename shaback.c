@@ -34,11 +34,11 @@ static struct verb {
 	int min_args;
 	int (*f)(struct shaback *, int, char **);
 } verbs[] = {
-	{ "read", "SOURCE [PATTERN ...]", 1, shaback_read },
-	{ "check", "SOURCE [PATTERN ...]", 1, shaback_check },
-	{ "list", "SOURCE [PATTERN ...]", 1, shaback_list },
-	{ "write", "TARGET [PATTERN ...]", 1, shaback_write },
-	{ "append", "TARGET [PATTERN ...]", 1, NULL },
+	{ "read", "\t\tSOURCE [PATTERN ...]", 1, shaback_read },
+	{ "check", "\t\tSOURCE [PATTERN ...]", 1, shaback_check },
+	{ "list", "\t\tSOURCE [PATTERN ...]", 1, shaback_list },
+	{ "write", "\t[-o]\tTARGET [PATTERN ...]", 1, shaback_write },
+	{ "append", "\t\tTARGET [PATTERN ...]", 1, NULL },
 };
 
 static const char *prog;

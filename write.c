@@ -68,15 +68,32 @@ shaback_dump_file(struct shaback *shaback, int fd, struct shaback_entry *ep)
 	SHA1_CTX			 sha;
 	char				 s[SHA1_DIGEST_STRING_LENGTH]={0}, *p;
 	uint64_t			 numeric_key;
+	off_t				 orig_offset;
 
 	ep->offset = shaback->pos;
 
 	SHA1Init(&sha);
 
+	total = 0;
 	while ((n = read(fd, buf, sizeof(buf))) > 0) {
 		SHA1Update(&sha, (u_int8_t *) buf, n);
+
+		if (shaback->dedup_overwrite) {
+			total += n;
+			if (write_blocks(shaback, buf, n) == -1)
+				return -1;
+		}
 	}
 	SHA1Final((u_int8_t *) ep->key, &sha);
+	if (shaback->dedup_overwrite) {
+		shaback->n_bytes += ep->size;
+		flush_blocks(shaback);
+
+		if (total != ep->size) {
+			warnx("adjust size %s", ep->path);
+			ep->size = total;
+		}
+	}
 	if (n < 0)
 		return -1;
 
@@ -94,7 +111,19 @@ shaback_dump_file(struct shaback *shaback, int fd, struct shaback_entry *ep)
 	}
 
 	shaback->n_total++;
-	if (shaback_dedup(shaback, ep, numeric_key) == 0) {
+
+	orig_offset = ep->offset;
+	if (shaback->dedup_overwrite &&
+	    shaback_dedup(shaback, ep, numeric_key) == 1) {
+		total -= ep->size;
+		shaback->n_duplicated++;
+		shaback->n_bytes_dedup -= ep->size;
+		shaback->n_bytes += ep->size;
+		if (lseek(shaback->fd, orig_offset, SEEK_SET) == -1)
+			return -1;
+		shaback->pos = orig_offset;
+	} else if (!shaback->dedup_overwrite &&
+	    shaback_dedup(shaback, ep, numeric_key) == 0) {
 		int			 ret, flush;
 		unsigned int		 have;
 		z_stream		 strm;
@@ -168,7 +197,7 @@ shaback_dump_file(struct shaback *shaback, int fd, struct shaback_entry *ep)
 			warnx("adjust size %s", ep->path);
 			ep->size = total;
 		}
-	} else {
+	} else if (!shaback->dedup_overwrite) {
 		shaback->n_duplicated++;
 		shaback->n_bytes_dedup -= ep->size;
 		shaback->n_bytes += ep->size;
@@ -249,6 +278,7 @@ dump(struct shaback *shaback, int fd, const char *path, struct stat *sb)
 	}
 
 	if (read_meta(shaback, ep, sb) == -1) {
+		warn("read_meta");
 		free(ep->path);
 		return -1;
 	}
@@ -284,6 +314,24 @@ shaback_write(struct shaback *shaback, int argc, char **argv)
 	size_t i;
 	int ret;
 	char *arg1[1], **args;
+	char *p;
+
+	if (**argv == '-' && argc > 1) {
+		p = *argv;
+		while (*++p != '\0') {
+			switch (*p) {
+			case 'o':
+				printf("Dedupping by overwriting\n");
+				shaback->dedup_overwrite = 1;
+				break;
+			default:
+				fprintf(stderr, "Supported options: -o\n");
+				break;
+			}
+		}
+		argv++;
+		argc--;
+	}
 
 	shaback->target = *argv++;
 	argc--;

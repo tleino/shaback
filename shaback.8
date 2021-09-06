@@ -8,6 +8,7 @@
 .Nm shaback
 write
 .Bk -words
+.Op -o
 .Ar target
 .Op Ar file Ar ...
 .Ek
@@ -17,6 +18,9 @@ read
 .Ek
 .Nm
 check
+.Ar target
+.Nm
+list
 .Ar target
 .Ek
 .Sh DESCRIPTION
@@ -43,6 +47,18 @@ reasons,
 .Nm
 can be a better / faster choice than the legacy
 alternatives, or the end result is a smaller archive size.
+.Pp
+The write mode accepts these options:
+.Pp
+.Bl -tag -width Ds
+.It Fl o
+Perform deduplication by (sometimes) overwriting instead of
+reading (always) twice. This behavior might be more suitable for
+media such as HDD that is not limited by the number of writes.
+Either reading twice or writing twice is necessary because we
+need to read the full file for calculating it's hash so that
+we know whether the file is duplicated or not.
+.El
 .Sh SEE ALSO
 .Xr dump 8 ,
 .Xr tar 1
