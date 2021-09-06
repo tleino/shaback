@@ -40,7 +40,7 @@ read_meta(struct shaback *shaback, struct shaback_entry *ep, struct stat *sb)
 			return -1;
 		buf[n] = '\0';
 		ep->link_path = (unsigned char *) strdup(buf);
-		if (ep->link_path)
+		if (ep->link_path == NULL)
 			return -1;
 	} else if (S_ISREG(sb->st_mode)) {
 		shaback->regulars++;
