@@ -35,6 +35,7 @@ restore_file(struct shaback *shaback, struct shaback_entry *ep)
 	ssize_t n;
 	size_t sz;
 	ssize_t remaining;
+	struct timespec ts[2] = { 0 };
 
 	umask(0);
 
@@ -148,6 +149,20 @@ restore_file(struct shaback *shaback, struct shaback_entry *ep)
 		}
 		close(fd);
 	}
+	ts[0].tv_sec = ep->atime;
+	ts[1].tv_sec = ep->mtime;
+	if (utimensat(AT_FDCWD, p, ts, AT_SYMLINK_NOFOLLOW) == -1) {
+		warn("futimes %s", p);
+		return -1;
+	}
+	if (geteuid() == 0) {
+		if (fchownat(AT_FDCWD, p, ep->uid, ep->gid,
+		    AT_SYMLINK_NOFOLLOW) == -1) {
+			warn("fchownat %s", p);
+			return -1;
+		}
+	}
+	
 	return 0;
 }
 
