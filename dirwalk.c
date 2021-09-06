@@ -56,7 +56,7 @@ shaback_dirwalk(struct shaback *shaback, int cwd_fd, const char *file,
 		return -1;
 
 	fd = -1;
-	if (S_ISDIR(sb.st_mode) || S_ISREG(sb.st_mode)) {
+	if (S_ISDIR(sb.st_mode) || (S_ISREG(sb.st_mode) && sb.st_size > 0)) {
 		fd = openat(cwd_fd, file, O_RDONLY);
 		if (fd == -1)
 			return -1;
