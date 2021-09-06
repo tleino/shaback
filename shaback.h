@@ -86,6 +86,7 @@ struct shaback
 	uint64_t total_bytes;
 	int dedup;
 	int dedup_overwrite;
+	int compress;
 	int dupmeta;
 	struct shaback_entry *first;
 	struct shaback_hash_entry **hashmap;

@@ -35,7 +35,10 @@ shaback_want_compress(struct shaback *shaback, struct shaback_entry *ep)
 {
 	const char			*p;
 
-	if (1 || ep->size < 1024) {
+	if (!shaback->compress)
+		return 0;
+
+	if (ep->size < 1024) {
 		shaback->too_small_to_compress++;
 		return 0;
 	}
@@ -324,8 +327,12 @@ shaback_write(struct shaback *shaback, int argc, char **argv)
 				printf("Dedupping by overwriting\n");
 				shaback->dedup_overwrite = 1;
 				break;
+			case 'z':
+				printf("Compress\n");
+				shaback->compress = 1;
+				break;
 			default:
-				fprintf(stderr, "Supported options: -o\n");
+				fprintf(stderr, "Supported options: -oz\n");
 				break;
 			}
 		}

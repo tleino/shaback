@@ -8,7 +8,7 @@
 .Nm shaback
 write
 .Bk -words
-.Op -o
+.Op -oz
 .Ar target
 .Op Ar file Ar ...
 .Ek
@@ -58,6 +58,9 @@ media such as HDD that is not limited by the number of writes.
 Either reading twice or writing twice is necessary because we
 need to read the full file for calculating it's hash so that
 we know whether the file is duplicated or not.
+.It Fl z
+Compress files individually unless the files are very small or
+if they are already compressed.
 .El
 .Sh SEE ALSO
 .Xr dump 8 ,
