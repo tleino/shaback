@@ -70,7 +70,7 @@ shaback_dump_file(struct shaback *shaback, int fd, struct shaback_entry *ep)
 	static char			 buf[CHUNK];
 	SHA1_CTX			 sha;
 	char				 s[SHA1_DIGEST_STRING_LENGTH]={0}, *p;
-	uint64_t			 numeric_key;
+	uint64_t			 nkey;
 	off_t				 orig_offset;
 	int				 flushes;
 	off_t				 orig_pos;
@@ -100,10 +100,10 @@ shaback_dump_file(struct shaback *shaback, int fd, struct shaback_entry *ep)
 		return -1;
 
 	p = s;
-	numeric_key = 0;
+	nkey = 0;
 	for (i = 0; i < SHA1_DIGEST_LENGTH; i++) {
 		p += snprintf(p, 2 + 1, "%02x", ep->key[i]);
-		numeric_key ^= (ep->key[i] << (i * 2));
+		nkey = ep->key[i] + (nkey << 6) + (nkey << 16) - nkey; 
 	}
 
 	ep->hash_file = strdup((const char *) s);
@@ -116,7 +116,7 @@ shaback_dump_file(struct shaback *shaback, int fd, struct shaback_entry *ep)
 
 	orig_offset = ep->offset;
 	if (shaback->dedup_overwrite &&
-	    shaback_dedup(shaback, ep, numeric_key) == 1) {
+	    shaback_dedup(shaback, ep, nkey) == 1) {
 		shaback->n_duplicated++;
 		shaback->n_bytes_dedup -= ep->size;
 		shaback->n_bytes += ep->size;
@@ -150,7 +150,7 @@ shaback_dump_file(struct shaback *shaback, int fd, struct shaback_entry *ep)
 			ep->size = total;
 		}
 	} else if (!shaback->dedup_overwrite &&
-	    shaback_dedup(shaback, ep, numeric_key) == 0) {
+	    shaback_dedup(shaback, ep, nkey) == 0) {
 		int			 ret, flush;
 		unsigned int		 have;
 		z_stream		 strm;
@@ -326,8 +326,9 @@ write_blocks(struct shaback *shaback, const char *buf, size_t bsz)
 static int
 dump(struct shaback *shaback, int fd, const char *path, struct stat *sb)
 {
-	struct shaback_entry e = {0}, *ep;
-	size_t curpos = 0;
+	struct shaback_entry		 e = {0}, *ep;
+	size_t				 curpos = 0;
+	int				 flags;
 
 	ep = &e;
 
@@ -341,11 +342,21 @@ dump(struct shaback *shaback, int fd, const char *path, struct stat *sb)
 		return -1;
 	}
 
+	flags = shaback_path_set(shaback, ep->path, ep->mtime, PathCurrent);
+	if (flags == -1) {
+		free(ep->path);
+		return -1;
+	}
+	else if (!(flags & PATH_UPDATE)) {
+		warnx("not updating %s", ep->path);
+		free(ep->path);
+		return 0;
+	}
+
 	if (S_ISREG(sb->st_mode) && ep->size > 0) {
 		if (shaback_dump_file(shaback, fd, ep) == -1) {
 			free(ep->path);
-			free(ep);
-			return 1;
+			return -1;
 		}
 
 		curpos = shaback->pos;
@@ -362,6 +373,47 @@ dump(struct shaback *shaback, int fd, const char *path, struct stat *sb)
 		free(ep->hash_meta);
 
 	shaback->entries++;
+	return 0;
+}
+
+int
+load_index(struct shaback *shaback, struct shaback_entry *ep)
+{
+	uint64_t			 nkey;
+	char				*p;
+	int				 nibble, num, j;
+
+	if (ep->type != 'f' || ep->size == 0)
+		return 0;
+
+	nkey = 0;
+	p = ep->hash_file;
+	nibble = 0;
+	j = 0;
+	while (p != NULL && *p != '\0') {
+		if (*p >= '0' && *p <= '9')
+			num = (*p - '0');
+		else if (*p >= 'a' && *p <= 'f')
+			num = (*p - 'a' + 10);
+		else
+			break;
+
+		if (nibble++ == 1) {
+			ep->key[j] += num;
+			nkey = ep->key[j] + (nkey << 6) + (nkey << 16) - nkey; 
+			j++;
+			nibble = 0;
+		} else
+			ep->key[j] = num * 16;
+
+		p++;
+	}
+	if (shaback_dedup(shaback, ep, nkey) == -1)
+		return -1;
+
+	shaback->entries++;
+	if (shaback_path_set(shaback, ep->path, ep->mtime, PathStored) == -1)
+		return -1;
 
 	return 0;
 }
@@ -386,8 +438,12 @@ shaback_write(struct shaback *shaback, int argc, char **argv)
 				printf("Compress\n");
 				shaback->compress = 1;
 				break;
+			case 'f':
+				printf("Force full backup\n");
+				shaback->force_full = 1;
+				break;
 			default:
-				fprintf(stderr, "Supported options: -oz\n");
+				fprintf(stderr, "Supported options: -foz\n");
 				break;
 			}
 		}
@@ -405,20 +461,47 @@ shaback_write(struct shaback *shaback, int argc, char **argv)
 			err(1, "calloc");
 	}
 
-	if ((shaback->fd = open(shaback->target,
-	    O_WRONLY | O_CREAT | O_TRUNC,
-	    S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH)) == -1) {
-		warn("%s", shaback->target);
-		return -1;
+	if (shaback->force_full == 0) {
+		if ((shaback->fd = open(shaback->target, O_RDONLY, 0)) == -1) {
+			warn("%s", shaback->target);
+			return -1;
+		}
+
+		printf("Reading previous backup...\n");
+		if (shaback_read_index(shaback, load_index) == -1) {
+			warn("shaback_read_index");
+			close(shaback->fd);
+		}
+		printf("%llu entries (%llu dups)\n", shaback->entries,
+		    shaback->dups);
+
+		close(shaback->fd);
+
+		if ((shaback->fd = open(shaback->target,
+		    O_WRONLY | O_CREAT,
+		    S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP |
+		    S_IROTH | S_IWOTH)) == -1) {
+			warn("%s", shaback->target);
+			return -1;
+		}
+	} else {
+		if ((shaback->fd = open(shaback->target,
+		    O_WRONLY | O_CREAT | O_TRUNC,
+		    S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP |
+		    S_IROTH | S_IWOTH)) == -1) {
+			warn("%s", shaback->target);
+			return -1;
+		}
 	}
 
 	/*
 	 * Reserve space for the index.
 	 */
-	shaback->pos = INDEX_SIZE;
-	if (lseek(shaback->fd, INDEX_SIZE, SEEK_SET) == -1)
+	shaback->pos = shaback->index.next_offset + INDEX_SIZE;
+	printf("Seeking to pos %llu\n", shaback->pos);
+	if (lseek(shaback->fd, shaback->pos, SEEK_SET) == -1)
 		err(1, "lseek");
-	shaback->index.offset = 0;
+	shaback->index.offset = shaback->index.next_offset;
 	shaback->index.len = 512;
 
 	if (argc == 0) {
@@ -433,6 +516,7 @@ shaback_write(struct shaback *shaback, int argc, char **argv)
 			warn("%s", args[i]);
 	}
 
+	shaback_path_prune(shaback);
 	shaback_flush_index(shaback);
 
 	printf("%16zd\tactual (KB)\n"

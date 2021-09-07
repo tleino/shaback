@@ -111,12 +111,13 @@ full:
 void
 shaback_flush_index(struct shaback *shaback)
 {
-	static time_t t;
-	time_t now, diff;
+	static time_t			 t;
+	time_t				 now, diff;
+	static char			 buf[SECTORSIZE];
 
 	shaback_flush_blocks(shaback);
 
-	snprintf(shaback->index.buf, 512,
+	snprintf(shaback->index.buf, SECTORSIZE,
 	    "SHABACK INDEX %llu %llu %d\n", shaback->index.entries,
 	    shaback->pos, INDEX_SIZE);
 
@@ -147,6 +148,14 @@ shaback_flush_index(struct shaback *shaback)
 	shaback->index.len = 512;
 	shaback->index.entries = 0;
 	shaback->index.bytes = 0;
+
+	/*
+	 * Write one empty sector to mark the end of index blocks.
+	 * This will be overwritten by next index, if any.
+	 */
+	if (pwrite(shaback->fd, buf, SECTORSIZE, shaback->pos) == -1)
+		err(1, "pwrite");
+
 	shaback->pos += INDEX_SIZE;
 	if (lseek(shaback->fd, shaback->pos, SEEK_SET) == -1)
 		err(1, "lseek");
@@ -191,8 +200,11 @@ shaback_read_index(struct shaback *shaback, IndexCallback cb)
 	end = &buf[INDEX_SIZE-1];
 
 	n = read(shaback->fd, buf, sizeof(buf));
-	if (n != INDEX_SIZE) {
-		warnx("failed reading index");
+	if (n >= SECTORSIZE && *buf == '\0') {
+		warnx("end of archive");
+		return 0;
+	} else if (n != INDEX_SIZE) {
+		warn("failed reading index");
 		return -1;
 	}
 
@@ -340,6 +352,8 @@ shaback_read_index(struct shaback *shaback, IndexCallback cb)
 
 	if (lseek(shaback->fd, next_offset, SEEK_SET) == -1)
 		return -1;
+
+	shaback->index.next_offset = next_offset;
 
 	return shaback_read_index(shaback, cb);
 }

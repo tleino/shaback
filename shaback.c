@@ -37,8 +37,7 @@ static struct verb {
 	{ "read", "\t\tSOURCE [PATTERN ...]", 1, shaback_read },
 	{ "check", "\t\tSOURCE [PATTERN ...]", 1, shaback_check },
 	{ "list", "\t\tSOURCE [PATTERN ...]", 1, shaback_list },
-	{ "write", "\t[-oz]\tTARGET [PATTERN ...]", 1, shaback_write },
-	{ "append", "\t\tTARGET [PATTERN ...]", 1, NULL },
+	{ "write", "\t[-foz]\tTARGET [PATTERN ...]", 1, shaback_write },
 };
 
 static const char *prog;

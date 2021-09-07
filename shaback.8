@@ -8,7 +8,7 @@
 .Nm shaback
 write
 .Bk -words
-.Op -oz
+.Op -foz
 .Ar target
 .Op Ar file Ar ...
 .Ek
@@ -61,6 +61,8 @@ we know whether the file is duplicated or not.
 .It Fl z
 Compress files individually unless the files are very small or
 if they are already compressed.
+.It Fl f
+Force full backup. By default incremental backup is done.
 .El
 .Sh SEE ALSO
 .Xr dump 8 ,

@@ -69,7 +69,7 @@ restore_file(struct shaback *shaback, struct shaback_entry *ep)
 			return -1;
 		}
 	} else if (ep->type == 'f') {
-		fd = open(p, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW,
+		fd = open(p, O_WRONLY | O_CREAT /*| O_EXCL*/ | O_NOFOLLOW,
 		    ep->mode);
 		remaining = ep->compressed_size;
 		if (remaining == 0)

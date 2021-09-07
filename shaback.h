@@ -25,9 +25,17 @@
 
 #include <sys/stat.h>
 
-#define HASHMAP_ALLOC	(1024 * 1024)
-#define INDEX_SIZE	(512 * 2048)
-#define CHUNK		(512 * 4096)
+#ifndef PAGESIZE
+#define PAGESIZE	4096
+#endif
+
+#ifndef SECTORSIZE
+#define SECTORSIZE	512
+#endif
+
+#define HASHMAP_ALLOC	(PAGESIZE * 2000)
+#define INDEX_SIZE	(SECTORSIZE * 2048)
+#define CHUNK		(SECTORSIZE * 4000)
 
 struct shaback_hash_entry
 {
@@ -35,6 +43,15 @@ struct shaback_hash_entry
 	off_t				 offset;
 	u_int8_t			 key[SHA1_DIGEST_LENGTH];
 	struct shaback_hash_entry	*next;
+};
+
+struct shaback_path_entry
+{
+	char				*path;
+	uint64_t			 mtime;
+	int				 flags;
+	struct shaback_path_entry	*hash_next;
+	struct shaback_path_entry	*next;
 };
 
 struct shaback_entry
@@ -89,8 +106,11 @@ struct shaback
 	int dedup_overwrite;
 	int compress;
 	int dupmeta;
+	int force_full;
 	struct shaback_entry *first;
 	struct shaback_hash_entry **hashmap;
+	struct shaback_path_entry *path_hash[HASHMAP_ALLOC];
+	struct shaback_path_entry *path_head;
 	char *path;
 	size_t path_alloc;
 	size_t path_len;
@@ -120,6 +140,22 @@ int				 shaback_check(struct shaback *, int, char **);
 int				 shaback_list(struct shaback *, int, char **);
 int				 shaback_write(struct shaback *, int, char **);
 int				 shaback_read(struct shaback *, int, char **);
+
+/*
+ * path.c
+ */
+enum {
+	PathCurrent,
+	PathStored
+};
+#define PATH_KEEP		(1 << 0)
+#define PATH_UPDATE		(1 << 1)
+
+int				 shaback_path_set(struct shaback *,
+				    const char *, uint64_t, int);
+int				 shaback_path_get(struct shaback *,
+				    const char *);
+void				 shaback_path_prune(struct shaback *);
 
 /*
  * write.c
