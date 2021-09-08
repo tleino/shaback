@@ -102,7 +102,6 @@ shaback_add_index_entry(struct shaback *shaback, struct shaback_entry *ep)
 	shaback->index.entries++;
 	return;
 full:
-	memset(begin, '\0', INDEX_SIZE - shaback->index.len);
 	shaback_flush_index(shaback);
 	shaback_add_index_entry(shaback, ep);
 	return;
@@ -140,6 +139,10 @@ shaback_flush_index(struct shaback *shaback)
 
 	if (lseek(shaback->fd, shaback->index.offset, SEEK_SET) == -1)
 		err(1, "lseek");
+
+	if (shaback->index.len < INDEX_SIZE)
+		memset(&shaback->index.buf[shaback->index.len],
+		    '\0', INDEX_SIZE - shaback->index.len);
 
 	if (write(shaback->fd, shaback->index.buf, INDEX_SIZE) != INDEX_SIZE)
 		err(1, "write");
