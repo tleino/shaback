@@ -464,7 +464,8 @@ shaback_write(struct shaback *shaback, int argc, char **argv)
 	if (shaback->force_full == 0) {
 		if ((shaback->fd = open(shaback->target, O_RDONLY, 0)) == -1) {
 			warn("%s", shaback->target);
-			return -1;
+			shaback->force_full = 1;
+			goto full_backup;
 		}
 
 		printf("Reading previous backup...\n");
@@ -485,6 +486,14 @@ shaback_write(struct shaback *shaback, int argc, char **argv)
 			return -1;
 		}
 	} else {
+full_backup:
+#ifndef __OpenBSD__
+		shaback->magic = (uint64_t) arc4random();
+#else
+		srand(getpid());
+		shaback->magic = (uint64_t) rand();
+#endif
+		printf("full backup\n");
 		if ((shaback->fd = open(shaback->target,
 		    O_WRONLY | O_CREAT | O_TRUNC,
 		    S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP |

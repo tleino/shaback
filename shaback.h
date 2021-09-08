@@ -87,6 +87,7 @@ struct shaback_index {
 
 struct shaback
 {
+	uint64_t magic;
 	uint64_t entries;
 	uint64_t dirs;
 	uint64_t regulars;

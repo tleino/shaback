@@ -117,8 +117,8 @@ shaback_flush_index(struct shaback *shaback)
 	shaback_flush_blocks(shaback);
 
 	snprintf(shaback->index.buf, SECTORSIZE,
-	    "SHABACK INDEX %llu %llu %llu\n", shaback->index.entries,
-	    shaback->pos, shaback->index.len);
+	    "SHABACK INDEX %llu %llu %llu %llu\n", shaback->magic,
+	    shaback->index.entries, shaback->pos, shaback->index.len);
 
 	if (t == 0)
 		t = time(0);
@@ -198,6 +198,7 @@ shaback_read_index(struct shaback *shaback, IndexCallback cb)
 	off_t				 next_offset;
 	struct shaback_entry		 e = {0};
 	size_t				 alloc;
+	uint64_t			 magic;
 
 	end = &shaback->index.buf[INDEX_SIZE-1];
 
@@ -211,11 +212,15 @@ shaback_read_index(struct shaback *shaback, IndexCallback cb)
 	}
 
 	if (sscanf(shaback->index.buf,
-	    "SHABACK INDEX %llu %llu %llu", &shaback->index.entries,
-	    &next_offset, &shaback->index.len) != 3) {
+	    "SHABACK INDEX %llu %llu %llu %llu", &magic,
+	    &shaback->index.entries, &next_offset, &shaback->index.len) != 4) {
 		warnx("failed parsing shaback index header");
 		return -1;
 	}
+	if (shaback->magic == 0)
+		shaback->magic = magic;
+	if (magic != shaback->magic)
+		warnx("magic did not match");
 	if (n < shaback->index.len)
 		warnx("partial index");
 
