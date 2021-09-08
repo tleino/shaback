@@ -25,12 +25,13 @@
 #include <errno.h>
 #include <zlib.h>
 #include <fcntl.h>
+#include <inttypes.h>
 
 int
 list(struct shaback *shaback, struct shaback_entry *ep)
 {
 	if (ep->type == 'f' && ep->is_dup == 0)
-		printf("%16llu %s\n", ep->size, ep->path);
+		printf("%16"PRIu64" %s\n", ep->size, ep->path);
 	else if (ep->type == 'f' && ep->is_dup == 1)
 		printf("DUP              %s\n", ep->path);
 	else

@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <err.h>
 #include <errno.h>
+#include <inttypes.h>
 
 static ssize_t				 read_str_delim(char *, size_t,
 					    int, char **, size_t *);
@@ -73,8 +74,9 @@ shaback_add_index_entry(struct shaback *shaback, struct shaback_entry *ep)
 	/*
 	 * Add the metadata.
 	 */
-	len = snprintf(p, remaining,
-	    "%llu %c %llu %llu %llu %llu %llu %llu %llu %llu %llu %d %s ",
+	len = snprintf(p, remaining, "%"PRIu64" %c %"PRIu64" %"PRIu64" "
+	    "%"PRIu64" %"PRIu64" %"PRIu64" %"PRIu64" %"PRIu64" %"PRIu64" "
+	    "%"PRIu64" %d %s ",
 	    ep->offset, ep->type, ep->inode, ep->ctime,
 	    ep->atime, ep->mtime, ep->mode, ep->uid, ep->gid, ep->size,
 	    ep->compressed_size, ep->is_dup, ep->hash_file);
@@ -92,7 +94,18 @@ shaback_add_index_entry(struct shaback *shaback, struct shaback_entry *ep)
 		goto full;
 
 	len = (INDEX_SIZE - shaback->index.len) - remaining;
+
+#ifdef __OpenBSD__
 	SHA1Data((u_int8_t *) begin, len, p);
+#else
+	{
+		SHA1_CTX sha;
+		SHA1Init(&sha);
+		SHA1Update(&sha, (u_int8_t *) begin, len);
+		SHA1Final((unsigned char *) p, &sha);
+	}
+#endif
+
 	p += (SHA1_DIGEST_STRING_LENGTH - 1);
 	*p++ = '\n';
 	remaining -= (SHA1_DIGEST_STRING_LENGTH - 1 + 1);
@@ -117,8 +130,9 @@ shaback_flush_index(struct shaback *shaback)
 	shaback_flush_blocks(shaback);
 
 	snprintf(shaback->index.buf, SECTORSIZE,
-	    "SHABACK INDEX %llu %llu %llu %llu\n", shaback->magic,
-	    shaback->index.entries, shaback->pos, shaback->index.len);
+	    "SHABACK INDEX %"PRIu64" %"PRIu64" %"PRIu64" %"PRIu64"\n",
+	    shaback->magic, shaback->index.entries, shaback->pos,
+	    shaback->index.len);
 
 	if (t == 0)
 		t = time(0);
@@ -128,8 +142,8 @@ shaback_flush_index(struct shaback *shaback)
 	if (diff == 0)
 		diff = 1;
 
-	printf("Dump index had %llu entries "
-	    "(%d MB, %d blocks, %zu MB, %llu MB total, %llu MB/s)\n",
+	printf("Dump index had %"PRIu64" entries "
+	    "(%d MB, %d blocks, %zu MB, %"PRIu64" MB total, %"PRIu64" MB/s)\n",
 	    shaback->index.entries, INDEX_SIZE / 1024 / 1024, INDEX_SIZE / 512,
 	    shaback->index.bytes / 1024 / 1024,
 	    shaback->total_bytes / 1024 / 1024,
@@ -212,7 +226,7 @@ shaback_read_index(struct shaback *shaback, IndexCallback cb)
 	}
 
 	if (sscanf(shaback->index.buf,
-	    "SHABACK INDEX %llu %llu %llu %llu", &magic,
+	    "SHABACK INDEX %"PRIu64" %"PRIu64" %"PRIu64" %"PRIu64"", &magic,
 	    &shaback->index.entries, &next_offset, &shaback->index.len) != 4) {
 		warnx("failed parsing shaback index header");
 		return -1;
@@ -224,7 +238,7 @@ shaback_read_index(struct shaback *shaback, IndexCallback cb)
 	if (n < shaback->index.len)
 		warnx("partial index");
 
-	warnx("entries: %llu", shaback->index.entries);
+	warnx("entries: %"PRIu64"", shaback->index.entries);
 	p = &shaback->index.buf[512];
 
 	while (p != end) {

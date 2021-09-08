@@ -1,7 +1,6 @@
 SHELL = /bin/sh
-#CFLAGS = -g -Wall -pedantic -std=c99 -Wfatal-errors -Werror @SYSTEM_CFLAGS@
-CFLAGS = -g -Wall
-LDFLAGS = @SYSTEM_LDFLAGS@ -lz
+CFLAGS = -g -std=c99 @SYSTEM_CFLAGS@
+LDFLAGS = @SYSTEM_LDFLAGS@
 
 prefix = @prefix@
 exec_prefix = $(prefix)

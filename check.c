@@ -25,6 +25,7 @@
 #include <errno.h>
 #include <zlib.h>
 #include <fcntl.h>
+#include <inttypes.h>
 
 static uint64_t				 ok_bytes, fail_bytes;
 static uint64_t				 ok, fail;
@@ -105,12 +106,12 @@ static void
 print_results()
 {
 	printf(
-	    "%16llu checksum ok (files)\n"
-	    "%16llu checksum ok (MBytes)\n"
-	    "%16llu checksum ok (bytes)\n"
-	    "%16llu checksum fail (files)\n"
-	    "%16llu checksum fail (MBytes)\n"
-	    "%16llu checksum fail (bytes)\n",
+	    "%16"PRIu64" checksum ok (files)\n"
+	    "%16"PRIu64" checksum ok (MBytes)\n"
+	    "%16"PRIu64" checksum ok (bytes)\n"
+	    "%16"PRIu64" checksum fail (files)\n"
+	    "%16"PRIu64" checksum fail (MBytes)\n"
+	    "%16"PRIu64" checksum fail (bytes)\n",
 	    ok, ok_bytes/1024/1024, ok_bytes, fail, fail_bytes/1024/1024,
 	    fail_bytes);
 }

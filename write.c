@@ -20,11 +20,15 @@
 #include <unistd.h>
 #include <limits.h>
 #include <string.h>
+#ifdef __linux__
+#include <strings.h>
+#endif
 #include <stdlib.h>
 #include <err.h>
 #include <errno.h>
 #include <zlib.h>
 #include <fcntl.h>
+#include <inttypes.h>
 
 static int				 write_blocks(struct shaback *,
 					    const char *, size_t);
@@ -473,7 +477,7 @@ shaback_write(struct shaback *shaback, int argc, char **argv)
 			warn("shaback_read_index");
 			close(shaback->fd);
 		}
-		printf("%llu entries (%llu dups)\n", shaback->entries,
+		printf("%"PRIu64" entries (%"PRIu64" dups)\n", shaback->entries,
 		    shaback->dups);
 
 		close(shaback->fd);
@@ -487,7 +491,7 @@ shaback_write(struct shaback *shaback, int argc, char **argv)
 		}
 	} else {
 full_backup:
-#ifndef __OpenBSD__
+#ifdef __OpenBSD__
 		shaback->magic = (uint64_t) arc4random();
 #else
 		srand(getpid());
@@ -507,7 +511,7 @@ full_backup:
 	 * Reserve space for the index.
 	 */
 	shaback->pos = shaback->index.next_offset + INDEX_SIZE;
-	printf("Seeking to pos %llu\n", shaback->pos);
+	printf("Seeking to pos %"PRIu64"\n", shaback->pos);
 	if (lseek(shaback->fd, shaback->pos, SEEK_SET) == -1)
 		err(1, "lseek");
 	shaback->index.offset = shaback->index.next_offset;

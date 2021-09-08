@@ -50,8 +50,12 @@ Features:
 
 Dependencies:
 
+  On OpenBSD:
   - libz
-  - Unix-like operating system such as OpenBSD
+
+  On Linux:
+  - libz
+  - libssl-dev
 
 To compile:
 
