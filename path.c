@@ -102,7 +102,8 @@ shaback_path_set(struct shaback *shaback, const char *path, uint64_t mtime,
 
 		hp->flags = 0;
 		hp->mtime = mtime;
-		hp->path = strdup(path);
+		if ((hp->path = strdup(path)) == NULL)
+			return -1;
 
 		shaback->path_hash[k] = hp;
 		shaback->path_head = hp;
