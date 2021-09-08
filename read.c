@@ -25,17 +25,48 @@
 #include <errno.h>
 #include <zlib.h>
 #include <fcntl.h>
+#include <assert.h>
+
+static int				 restore_file(struct shaback *,
+					    struct shaback_entry *);
+static int				 restore_index(struct shaback *,
+					    struct shaback_entry *);
+
+static int
+restore_index(struct shaback *shaback, struct shaback_entry *ep)
+{
+	int			 	 mode;
+
+	mode = (ep->type == '-') ? PathDelete : PathCurrent;
+	if (shaback_path_set(shaback, ep->path, ep->mtime, mode) == -1)
+		return -1;
+
+	return 0;
+}
 
 static int
 restore_file(struct shaback *shaback, struct shaback_entry *ep)
 {
-	int fd;
-	char *p;
-	static char buf[CHUNK];
-	ssize_t n;
-	size_t sz;
-	ssize_t remaining;
-	struct timespec ts[2] = { 0 };
+	int				 fd;
+	char				*p;
+	static char			 buf[CHUNK];
+	ssize_t				 n;
+	size_t				 sz;
+	ssize_t				 remaining;
+	struct timespec			 ts[2] = { 0 };
+	struct shaback_path_entry	*pe;
+
+	/*
+	 * Skip files for which we have a newer version.
+	 */
+	pe = shaback_path_get(shaback, ep->path);
+	assert(pe != NULL);
+	if (pe->mtime != ep->mtime)
+		return 0;
+	if (!(pe->flags & PATH_KEEP)) {
+		warnx("delete %s", ep->path);
+		return 0;
+	}
 
 	umask(0);
 
@@ -69,8 +100,12 @@ restore_file(struct shaback *shaback, struct shaback_entry *ep)
 			return -1;
 		}
 	} else if (ep->type == 'f') {
-		fd = open(p, O_WRONLY | O_CREAT /*| O_EXCL*/ | O_NOFOLLOW,
+		fd = open(p, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW,
 		    ep->mode);
+		if (fd == -1) {
+			warn("open %s", p);
+			return -1;
+		}
 		remaining = ep->compressed_size;
 		if (remaining == 0)
 			remaining = ep->size;
@@ -186,8 +221,17 @@ shaback_read(struct shaback *shaback, int argc, char **argv)
 		return -1;
 	}
 
+	if (shaback_read_index(shaback, restore_index) == -1) {
+		warn("restore_index");
+		close(shaback->fd);
+		return -1;
+	}
+
+	if (lseek(shaback->fd, 0, SEEK_SET) == -1)
+		return -1;
+
 	if (shaback_read_index(shaback, restore_file) == -1) {
-		warn("shaback_read_index");
+		warn("restore_file");
 		close(shaback->fd);
 		return -1;
 	}

@@ -146,14 +146,15 @@ int				 shaback_read(struct shaback *, int, char **);
  */
 enum {
 	PathCurrent,
-	PathStored
+	PathStored,
+	PathDelete
 };
 #define PATH_KEEP		(1 << 0)
 #define PATH_UPDATE		(1 << 1)
 
 int				 shaback_path_set(struct shaback *,
 				    const char *, uint64_t, int);
-int				 shaback_path_get(struct shaback *,
+struct shaback_path_entry	*shaback_path_get(struct shaback *,
 				    const char *);
 void				 shaback_path_prune(struct shaback *);
 

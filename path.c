@@ -39,7 +39,7 @@ path_hash(const char *path)
 	return k % HASHMAP_ALLOC;
 }
 
-int
+struct shaback_path_entry *
 shaback_path_get(struct shaback *shaback, const char *path)
 {
 	size_t				 k;
@@ -50,11 +50,11 @@ shaback_path_get(struct shaback *shaback, const char *path)
 	while (hp != NULL) {
 		assert(hp->path != NULL);
 		if (strcmp(hp->path, path) == 0)
-			return hp->flags;
+			return hp;
 		hp = hp->hash_next;
 	}
 
-	return 0;
+	return NULL;
 }
 
 void
@@ -114,9 +114,10 @@ shaback_path_set(struct shaback *shaback, const char *path, uint64_t mtime,
 		hp->flags |= (PATH_UPDATE);
 	}
 
-	if (type == PathCurrent) {
+	if (type == PathCurrent)
 		hp->flags |= (PATH_KEEP);
-	}
+	if (type == PathDelete)
+		hp->flags &= ~(PATH_KEEP);
 
 	return hp->flags;
 }
