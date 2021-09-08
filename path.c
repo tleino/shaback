@@ -112,6 +112,8 @@ shaback_path_set(struct shaback *shaback, const char *path, uint64_t mtime,
 			hp->flags |= (PATH_UPDATE);
 	} else if (type == PathCurrent && hp->mtime < mtime) {
 		hp->flags |= (PATH_UPDATE);
+	} else if (type == PathStored) {
+		hp->mtime = mtime;
 	}
 
 	if (type == PathCurrent)

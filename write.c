@@ -352,7 +352,6 @@ dump(struct shaback *shaback, int fd, const char *path, struct stat *sb)
 		return -1;
 	}
 	else if (!(flags & PATH_UPDATE)) {
-		warnx("not updating %s", ep->path);
 		free(ep->path);
 		return 0;
 	}
@@ -387,6 +386,9 @@ load_index(struct shaback *shaback, struct shaback_entry *ep)
 	char				*p;
 	int				 nibble, num, j;
 
+	if (shaback_path_set(shaback, ep->path, ep->mtime, PathStored) == -1)
+		return -1;
+
 	if (ep->type != 'f' || ep->size == 0)
 		return 0;
 
@@ -416,8 +418,6 @@ load_index(struct shaback *shaback, struct shaback_entry *ep)
 		return -1;
 
 	shaback->entries++;
-	if (shaback_path_set(shaback, ep->path, ep->mtime, PathStored) == -1)
-		return -1;
 
 	return 0;
 }
