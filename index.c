@@ -117,8 +117,8 @@ shaback_flush_index(struct shaback *shaback)
 	shaback_flush_blocks(shaback);
 
 	snprintf(shaback->index.buf, SECTORSIZE,
-	    "SHABACK INDEX %llu %llu %d\n", shaback->index.entries,
-	    shaback->pos, INDEX_SIZE);
+	    "SHABACK INDEX %llu %llu %llu\n", shaback->index.entries,
+	    shaback->pos, shaback->index.len);
 
 	if (t == 0)
 		t = time(0);
@@ -193,31 +193,34 @@ read_str_delim(char *buf, size_t sz, int delim, char **out, size_t *out_alloc)
 int
 shaback_read_index(struct shaback *shaback, IndexCallback cb)
 {
-	static char buf[INDEX_SIZE], *end, *p;
-	ssize_t n;
-	off_t next_offset;
-	struct shaback_entry e = {0};
-	size_t alloc;
-	char *s;
+	char				*end, *p, *s;
+	ssize_t				 n;
+	off_t				 next_offset;
+	struct shaback_entry		 e = {0};
+	size_t				 alloc;
 
-	end = &buf[INDEX_SIZE-1];
+	end = &shaback->index.buf[INDEX_SIZE-1];
 
-	n = read(shaback->fd, buf, sizeof(buf));
-	if (n >= SECTORSIZE && *buf == '\0') {
+	n = read(shaback->fd, shaback->index.buf, INDEX_SIZE);
+	if (n >= SECTORSIZE && *shaback->index.buf == '\0') {
 		warnx("end of archive");
 		return 0;
-	} else if (n != INDEX_SIZE) {
+	} else if (n <= 0) {
 		warn("failed reading index");
 		return -1;
 	}
 
-	if (sscanf(buf, "SHABACK INDEX %llu %llu %*d", &shaback->index.entries,
-	    &next_offset) != 2) {
+	if (sscanf(shaback->index.buf,
+	    "SHABACK INDEX %llu %llu %llu", &shaback->index.entries,
+	    &next_offset, &shaback->index.len) != 3) {
 		warnx("failed parsing shaback index header");
 		return -1;
 	}
+	if (n < shaback->index.len)
+		warnx("partial index");
+
 	warnx("entries: %llu", shaback->index.entries);
-	p = &buf[512];
+	p = &shaback->index.buf[512];
 
 	while (p != end) {
 		e.path = NULL;

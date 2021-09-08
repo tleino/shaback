@@ -79,7 +79,7 @@ struct shaback_entry
 struct shaback_index {
 	off_t		 offset;
 	off_t		 next_offset;
-	size_t		 len;
+	uint64_t	 len;
 	size_t		 bytes;
 	uint64_t	 entries;
 	char		 buf[INDEX_SIZE];
