@@ -373,6 +373,23 @@ shaback_read_index(struct shaback *shaback, IndexCallback cb)
 			if (cb(shaback, &e) == -1)
 				return -1;
 		}
+
+		if (e.hash_file != NULL) {
+			free(e.hash_file);
+			e.hash_file = NULL;
+		}
+		if (e.hash_meta != NULL) {
+			free(e.hash_meta);
+			e.hash_meta = NULL;
+		}
+		if (e.path != NULL) {
+			free(e.path);
+			e.path = NULL;
+		}
+		if (e.link_path != NULL) {
+			free(e.link_path);
+			e.link_path = NULL;
+		}
 	}
 
 	if (lseek(shaback->fd, next_offset, SEEK_SET) == -1)
