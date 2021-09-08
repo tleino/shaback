@@ -35,7 +35,7 @@
 
 #define HASHMAP_ALLOC	(PAGESIZE * 2000)
 #define INDEX_SIZE	(SECTORSIZE * 2048)
-#define CHUNK		(SECTORSIZE * 4000)
+#define CHUNK		(SECTORSIZE * 4096)
 
 struct shaback_hash_entry
 {
