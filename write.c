@@ -526,6 +526,7 @@ full_backup:
 		err(1, "lseek");
 	shaback->index.offset = shaback->index.next_offset;
 	shaback->index.len = 512;
+	shaback->index.entries = 0;
 
 	if (argc == 0) {
 		arg1[argc++] = ".";
@@ -534,13 +535,20 @@ full_backup:
 		args = argv;
 
 	for (i = 0; i < argc; i++) {
+		printf("Dirwalking and dumping: %s\n", args[i]);
 		ret = shaback_dirwalk(shaback, AT_FDCWD, args[i], dump);
 		if (ret == -1)
 			warn("%s", args[i]);
 	}
 
+	printf("Pruning index\n");
 	shaback_path_prune(shaback);
-	shaback_flush_index(shaback);
+
+	printf("Flushing index\n");
+	if (shaback->index.entries == 0)
+		printf("...0 entries, no need to flush\n");
+	else
+		shaback_flush_index(shaback);
 
 	printf("%16zd\tactual (KB)\n"
 	    "%16zd\tcompress (KB)\n%16zd\tdedup (KB)\n%16zd\tfinal (KB)\n"
