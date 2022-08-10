@@ -142,8 +142,9 @@ shaback_flush_index(struct shaback *shaback)
 	if (diff == 0)
 		diff = 1;
 
-	printf("Dump index had %"PRIu64" entries "
+	printf("Dump index at %jd had %"PRIu64" entries "
 	    "(%d MB, %d blocks, %zu MB, %"PRIu64" MB total, %"PRIu64" MB/s)\n",
+	    (intmax_t) shaback->index.offset,
 	    shaback->index.entries, INDEX_SIZE / 1024 / 1024, INDEX_SIZE / 512,
 	    shaback->index.bytes / 1024 / 1024,
 	    shaback->total_bytes / 1024 / 1024,
