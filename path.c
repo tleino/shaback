@@ -65,7 +65,7 @@ shaback_path_prune(struct shaback *shaback)
 
 	ep = &e;
 	for (np = shaback->path_head; np != NULL; np = np->next) {
-		if (!(np->flags & PATH_KEEP)) {
+		if (!(np->flags & PATH_KEEP) && !(np->flags & PATH_IGNORE)) {
 			ep->path = np->path;
 			ep->type = '-';
 			warnx("delete %s", ep->path);
@@ -83,6 +83,9 @@ shaback_path_set(struct shaback *shaback, const char *path, uint64_t mtime,
 
 	k = path_hash(path);
 
+	/*
+	 * Find existing entry for this path.
+	 */
 	hp = shaback->path_hash[k];
 	while (hp != NULL) {
 		assert(hp->path != NULL);
@@ -91,6 +94,13 @@ shaback_path_set(struct shaback *shaback, const char *path, uint64_t mtime,
 		else
 			break;
 	}
+
+	/*
+	 * No existing entry found and we wanted to delete the item from
+	 * index? Do nothing.
+	 */
+	if (hp == NULL && type == PathDelete)
+		return 0;
 
 	if (hp == NULL) {
 		hp = malloc(sizeof(*hp));
@@ -118,8 +128,13 @@ shaback_path_set(struct shaback *shaback, const char *path, uint64_t mtime,
 
 	if (type == PathCurrent)
 		hp->flags |= (PATH_KEEP);
-	if (type == PathDelete)
-		hp->flags &= ~(PATH_KEEP);
+
+	if (type == PathDelete) {
+		hp->flags = PATH_IGNORE;
+		hp->mtime = 0;
+	} else {
+		hp->flags &= ~(PATH_IGNORE);
+	}
 
 	return hp->flags;
 }

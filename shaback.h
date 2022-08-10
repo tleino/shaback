@@ -167,6 +167,7 @@ enum {
 };
 #define PATH_KEEP		(1 << 0)
 #define PATH_UPDATE		(1 << 1)
+#define PATH_IGNORE		(1 << 2)
 
 int				 shaback_path_set(struct shaback *,
 				    const char *, uint64_t, int);

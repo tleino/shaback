@@ -386,6 +386,16 @@ load_index(struct shaback *shaback, struct shaback_entry *ep)
 	char				*p;
 	int				 nibble, num, j;
 
+	/*
+	 * If index says a file is deleted, we don't load that entry.
+	 */
+	if (ep->type == '-') {
+		if (shaback_path_set(shaback, ep->path, ep->mtime, PathDelete)
+		    == -1)
+			return -1;
+		return 0;
+	}
+
 	if (shaback_path_set(shaback, ep->path, ep->mtime, PathStored) == -1)
 		return -1;
 
