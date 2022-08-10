@@ -29,6 +29,8 @@
 
 static uint64_t				 ok_bytes, fail_bytes;
 static uint64_t				 ok, fail;
+static uint64_t				 files, dirs, dups, deletions,
+					 specials;
 
 int
 verify_hash(struct shaback *shaback, struct shaback_entry *ep)
@@ -39,6 +41,15 @@ verify_hash(struct shaback *shaback, struct shaback_entry *ep)
 	ssize_t				 remaining;
 	SHA1_CTX			 sha;
 	char				 s[SHA1_DIGEST_STRING_LENGTH]={0}, *p;
+
+	switch (ep->type) {
+	case 'f':	files++; break;
+	case 'd':	dirs++; break;
+	case '-':	deletions++; break;
+	default:	specials++; break;
+	}
+	if (ep->is_dup)
+		dups++;
 
 	if (ep->type != 'f' || ep->is_dup || ep->size == 0)
 		return 0;
@@ -111,9 +122,14 @@ print_results()
 	    "%16"PRIu64" checksum ok (bytes)\n"
 	    "%16"PRIu64" checksum fail (files)\n"
 	    "%16"PRIu64" checksum fail (MBytes)\n"
-	    "%16"PRIu64" checksum fail (bytes)\n",
+	    "%16"PRIu64" checksum fail (bytes)\n"
+	    "%16"PRIu64" files\n"
+	    "%16"PRIu64" dirs\n"
+	    "%16"PRIu64" deletions\n"
+	    "%16"PRIu64" specials\n"
+	    "%16"PRIu64" dups\n",
 	    ok, ok_bytes/1024/1024, ok_bytes, fail, fail_bytes/1024/1024,
-	    fail_bytes);
+	    fail_bytes, files, dirs, deletions, specials, dups);
 }
 
 int
