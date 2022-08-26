@@ -1,0 +1,113 @@
+#!/bin/sh
+
+## This is an example script for pretty safe incremental backups on
+## OpenBSD, for an existing backup. The script makes sure that backup
+## is not executed if certain requirements are not met.
+## 
+## You need to modify this to suit your needs and your platform.
+
+## Target device for the incremental backup
+#DEVICE=sd4
+
+## Target raw device for the incremental backup
+#RAW=/dev/r${DEVICE}c
+
+## Source from where to read updated files
+#SRC=/archive
+
+## Assuming RAID1 or similar, check for health of the RAID first
+## Remove code related to $RAID to make this work without a RAID setup.
+#RAID=sd3
+
+## What is the correct location for shaback. This makes sure we're not
+## using a wrong version of shaback if PATH is messed up.
+#SHABACK=/usr/local/bin/shaback
+
+if \
+	[ -z $DEVICE ] || \
+	[ -z $RAW ] || \
+	[ -z $SRC ] || \
+	[ -z $RAID ] || \
+	[ -z $SHABACK ] ; then
+	echo "Modify the script first, please"
+	exit 1
+fi
+
+printf "%-39s %s\n" "Device" $DEVICE
+printf "%-39s %s\n" "Raw device" $RAW
+printf "%-39s %s\n" "shaback" $(which shaback)
+printf "%-39s %s\n" "SRC" $SRC
+printf "%-39s %s\n" "RAID" $RAID
+echo
+sleep 1
+
+printf "%-40s" "Test shaback location..."
+sleep 1
+if [ $(which shaback) != $SHABACK ] ; then
+	echo "wrong shaback, abort"
+	exit 1
+fi
+echo "ok"
+
+printf "%-40s" "Test duid not zero..."
+sleep 1
+if [ -z "$(disklabel $DEVICE | grep '^duid: 0000000000000000')" ] ; then
+	echo "Device $DEVICE duid is not zero, abort"
+	exit 1
+fi
+echo "ok"
+
+printf "%-40s" "Test device not mounted..."
+sleep 1
+if [ ! -z "$(df | grep $DEVICE)" ] ; then
+	echo "Device $DEVICE is mounted, abort"
+	exit 1
+fi
+echo "ok"
+
+printf "%-40s" "Test user is root..."
+sleep 1
+if [ $(whoami) != "root" ] ; then
+	echo "Non-root user, abort"
+	exit 1
+fi
+echo "ok"
+
+printf "%-40s" "Test SHABACK index header..."
+sleep 1
+if [ -z "$(dd if=/dev/r${DEVICE}c of=/dev/stdout bs=512 count=1 status=none | grep ^SHABACK)" ] ; then
+	echo "No SHABACK INDEX header, abort"
+	exit 1
+fi
+echo "ok"
+
+printf "%-40s" "Test $SRC is mounted..."
+sleep 1
+if [ -z "$(df | grep $SRC)" ] ; then
+	echo "$SRC is not mounted, abort"
+	exit 1
+fi
+echo "ok"
+
+printf "%-40s" "Test RAID $RAID is okay..."
+sleep 1
+if $(bioctl $RAID >/dev/null) ; then
+	echo "ok"
+else
+	echo "$RAID has problems, abort"
+	exit 1
+fi
+
+printf "%-40s" "Test raw device..."
+sleep 1
+if [ ! -c $RAW ] ; then
+	echo "Raw device not expected type, abort"
+	exit 1
+fi
+echo "ok"
+
+printf "%-40s" "Command..."
+echo shaback write $RAW $SRC
+sleep 1
+
+cd / && shaback write $RAW $SRC
